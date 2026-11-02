@@ -1,0 +1,205 @@
+#!/usr/bin/python3
+import math
+import requests
+import sys
+import os
+import json
+import pandas as pd
+import geopandas as gpd
+import shapely
+import osmnx as ox
+import pdal
+
+# --- QuadKey Math Functions ---
+def latlon_to_tile(lat, lon, zoom):
+    lat_rad = math.radians(lat)
+    n = 2.0 ** zoom
+    xtile = int((lon + 180.0) / 360.0 * n)
+    ytile = int((1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
+    return xtile, ytile
+
+def tile_to_quadkey(xtile, ytile, zoom):
+    quadkey = ""
+    for i in range(zoom, 0, -1):
+        digit = 0
+        mask = 1 << (i - 1)
+        if (xtile & mask) != 0: digit += 1
+        if (ytile & mask) != 0: digit += 2
+        quadkey += str(digit)
+    return quadkey
+
+def fetch_geodata(wkt_str, scenario_dir):
+    # read the area of interest from stdin (WKT string in EPSG:4326)
+    aoi = shapely.from_wkt(wkt_str)
+
+    # retrieve building footprints from OSM (default, more accurate)
+    print('Retrieving building footprints from OpenStreetMap...')
+    try:
+        # Use OSMnx to bypass the 406 Server Error
+        osm_raw = ox.features_from_polygon(aoi, {'building': True})
+        
+        if not osm_raw.empty:
+            # Filter to only keep Polygons (drops single-point addresses)
+            osm_raw = osm_raw[osm_raw.geometry.type.isin(['Polygon', 'MultiPolygon'])]
+            osm_gdf = osm_raw.to_crs('EPSG:3857')
+            osm_footprints = osm_gdf.geometry.tolist()
+            print(f'Found {len(osm_gdf)} OSM buildings')
+        else:
+            osm_footprints = []
+            osm_gdf = gpd.GeoDataFrame(geometry=[], crs='EPSG:3857')
+            print('Found 0 OSM buildings')
+            
+    except Exception as e:
+        print(f'  OSM Query failed: {e}. Falling back to Microsoft only.')
+        osm_footprints = []
+        osm_gdf = gpd.GeoDataFrame(geometry=[], crs='EPSG:3857')
+
+    # retrieve building footprints from Microsoft Building Footprints
+    print('Retrieving building footprints from Microsoft Building Footprints...')
+
+    # load links and force QuadKey to string, padding with leading zeros
+    links = pd.read_csv('https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv', dtype={'QuadKey': str})
+    links['QuadKey'] = links['QuadKey'].astype(str).str.zfill(9)
+
+    # calculate QuadKeys for our AOI so we only download the tiles we need
+    minx, miny, maxx, maxy = aoi.bounds
+    xtile_min, ytile_min = latlon_to_tile(maxy, minx, 9)
+    xtile_max, ytile_max = latlon_to_tile(miny, maxx, 9)
+    qks = [tile_to_quadkey(x, y, 9) for x in range(xtile_min, xtile_max + 1) for y in range(ytile_min, ytile_max + 1)]
+    target_links = links[links['QuadKey'].isin(qks)]
+
+    # store Microsoft footprints that don't overlap with any OSM footprint
+    ms_footprints = []
+    for _, row in target_links.iterrows():
+        try:
+            df = pd.read_json(row['Url'], lines=True, compression='gzip')
+            if df.empty:
+                continue
+            df['geometry'] = df['geometry'].apply(shapely.geometry.shape)
+            gdf = gpd.GeoDataFrame(df, crs='EPSG:4326')
+
+            # fast bounding box clip then exact intersection
+            gdf = gdf.cx[minx:maxx, miny:maxy]
+            gdf = gdf[gdf.intersects(aoi)]
+            if len(gdf) == 0:
+                continue
+            gdf = gdf.to_crs('EPSG:3857')
+
+            # only keep Microsoft buildings that don't overlap with any OSM building
+            if len(osm_gdf) > 0:
+                intersecting = osm_gdf.sindex.query(gdf.geometry, predicate="intersects")[0]
+                # list(set(...)) prevents duplicate index crashes
+                gdf_clean = gdf.reset_index(drop=True).drop(list(set(intersecting)))
+            else:
+                gdf_clean = gdf
+
+            ms_footprints.extend(gdf_clean.geometry.tolist())
+        except Exception as e:
+            print(f'  Failed to process tile: {e}')
+            continue
+        print(f'Found {len(ms_footprints)} additional Microsoft buildings not in OSM')
+
+    # write all OSM footprints and non-overlapping Microsoft footprints to buildings.wkt
+    with open('buildings.wkt', 'w') as file:
+        for footprint in osm_footprints:
+            file.write(shapely.to_wkt(footprint))
+            file.write('\n')
+        for footprint in ms_footprints:
+            file.write(shapely.to_wkt(footprint))
+            file.write('\n')
+
+    # retrieve the latest USGS LiDAR project boundaries
+    print('Retrieving USGS 3DEP project boundaries...')
+    url = 'https://raw.githubusercontent.com/hobuinc/usgs-lidar/master/boundaries/resources.geojson'
+    res = requests.get(url)
+
+    # find all LiDAR projects that intersect with the area of interest
+    projects = gpd.read_file(json.dumps(res.json()))
+    urls = []
+    coverage = None
+    for project in projects.iloc:
+        if aoi.intersects(project.geometry):
+            urls.append(project.url)
+            if coverage == None: coverage = project.geometry
+            else: coverage = coverage.union(project.geometry)
+
+    # check that the area of interest is fully covered
+    if not aoi.intersects(coverage):
+        print('Error: The area of interest has no LiDAR coverage')
+        sys.exit()
+    elif not aoi.covered_by(coverage):
+        print('Warning: The area of interest is not fully covered')
+
+    # fetch the unprocessed LAZ file from USGS Entwine database
+    print('Downloading clipped LPC from AWS S3 bucket...')
+    pdal_pipeline = []
+    aoi_3857 = gpd.GeoSeries([aoi], crs='EPSG:4326').to_crs('EPSG:3857').iloc[0]
+    for url in urls:
+        reader = {
+            'type': 'readers.ept',
+            'filename': url,
+            'polygon': shapely.to_wkt(aoi_3857),
+        }
+        pdal_pipeline.append(reader)
+        filters = [
+            {
+                'type': 'filters.merge',
+            },
+            {
+                'type': 'writers.las',
+                'filename': 'lpc.laz',
+                'compression': 'true',
+            }
+        ]
+        pdal_pipeline += filters
+        pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline))
+        print("starting...")
+        pdal_pipeline.execute()
+
+    # generate a 1m DSM of ground points
+    print('Generating bare surface DSM...')
+    pdal_pipeline = [
+        {
+            'type': 'readers.las',
+            'filename': os.path.join(scenario_dir, 'lpc.laz'),
+        },
+        {
+            'type': 'filters.expression',
+            'expression': 'Classification == 2',
+        },
+        {
+            'type': 'writers.gdal',
+            'resolution': 1,
+            'radius': 3,
+            'output_type': 'mean',
+            'filename': 'ground.tif'
+        }
+    ]
+    pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline))
+    pdal_pipeline.execute()
+
+    print('Patching holes in ground DEM...')
+    os.system('gdal_fillnodata ground.tif ground.tif')
+
+    # remove ground points and outliers from LAZ
+    print('Removing outlier and ground points from LAZ...')
+    pdal_pipeline = [
+        {
+            'type': 'readers.las',
+            'filename': 'lpc.laz'
+        },
+        {
+            'type': 'filters.hag_nn',
+        },
+        {
+            'type': 'filters.expression',
+            'expression': 'Classification != 2 && Classification != 7 && Classification != 18 && HeightAboveGround >= 2',
+        },
+        {
+            'type': 'writers.las',
+            'filename': 'lpc.laz',
+            'compression': 'true',
+        }
+    ]
+    pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline))
+    pdal_pipeline.execute()

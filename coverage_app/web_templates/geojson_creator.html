@@ -1,0 +1,2690 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Create GeoJSON File</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet.draw CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Instructions box at the top */
+    /* Help panel (opened by "?" control) */
+    #help-panel {
+      display: none;
+      position: absolute;
+      top: 10px;
+      left: 50px;
+      z-index: 1100;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+      padding: 18px 20px 14px;
+      min-width: 280px;
+      max-width: 340px;
+      border-left: 4px solid #007bff;
+    }
+    #help-panel.open { display: block; }
+    #help-panel h3 { margin: 0 0 10px; font-size: 14px; color: #0056b3; }
+    #help-panel ol { margin: 0; padding-left: 18px; font-size: 13px; color: #333; line-height: 1.6; }
+    #help-panel ul { margin: 4px 0 4px 4px; padding-left: 16px; }
+    #help-panel .help-close {
+      position: absolute; top: 8px; right: 10px;
+      background: none; border: none; font-size: 16px; cursor: pointer;
+      color: #888; padding: 0; margin: 0; line-height: 1;
+    }
+    .help-control-btn { font-size: 0 !important; font-weight: bold; }
+    .help-control-btn::after {
+      content: "?";
+      font-size: 16px;
+      font-weight: 900;
+      font-family: Arial, sans-serif;
+    }
+
+    #map-container {
+      display: flex;
+      flex-direction: row;
+      margin-top: 0;
+      position: relative;
+      flex: 1;
+      min-height: 0;
+    }
+    #map {
+      flex: 1;
+      border: 1px solid #ccc;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 5px;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #message {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #555;
+      text-align: right;
+      max-width: 200px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+
+
+    #locationWrapper {
+      position: relative;
+      display: inline-block;
+    }
+    #suggestions {
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      max-height: 240px;
+      overflow-y: auto;
+      z-index: 3000;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+    .suggestion-item {
+      padding: 8px 10px;
+      font-size: 13px;
+      color: #333;
+      cursor: pointer;
+      user-select: none;
+    }
+    .suggestion-item:hover {
+      background: #f1f5ff;
+    }
+    .secondary-btn {
+      background-color: #6c757d;
+    }
+    .secondary-btn:hover {
+      background-color: #5a6268;
+    }
+    #startMessage {
+      font-size: 13px;
+      color: #555;
+    }
+
+    /* Popup appearance */
+    .custom-popup .leaflet-popup-tip {
+      width: 15px;
+      height: 15px;
+    }
+    .custom-popup .leaflet-popup-content-wrapper {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(5px);
+    }
+    .antenna-popup {
+      padding: 5px;
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      max-width: 300px;
+    }
+    .antenna-popup .title {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #ccc;
+      color: #007bff;
+    }
+    .antenna-popup .param-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 4px 0;
+      align-items: center;
+    }
+    .antenna-popup .param-label {
+      color: #666;
+      margin-right: 10px;
+      font-size: 12px;
+    }
+    .antenna-popup .param-value {
+      font-weight: bold;
+      color: #333;
+    }
+    .antenna-popup .param-input {
+      width: 60px;
+      font-size: 12px;
+      padding: 3px;
+      margin-left: 5px;
+    }
+    .antenna-popup .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #ccc;
+      justify-content: space-evenly;
+    }
+    .antenna-popup .buttons button {
+      flex: 0 0 auto;
+    }
+
+    .area-popup {
+      padding: 5px;
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      max-width: 300px;
+    }
+    .area-popup .title {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #ccc;
+    }
+    .area-popup .param-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 4px 0;
+    }
+    .area-popup .param-label {
+      color: #666;
+      font-size: 12px;
+    }
+    .area-popup .param-value {
+      font-weight: bold;
+      color: #333;
+    }
+    .area-popup .coordinates {
+      margin: 5px 0;
+      padding: 5px;
+      background: #f8f9fa;
+      border-radius: 3px;
+    }
+    .centroid-marker {
+      font-size: 20px;
+      color: #FF4444;
+      text-align: center;
+      line-height: 20px;
+      text-shadow: 2px 2px 3px rgba(0,0,0,0.3);
+    }
+
+    /* Ghost marker styles */
+    .ghost-marker {
+      opacity: 0.5;
+    }
+
+    /* Base station popup styles */
+    .basestation-popup {
+      padding: 10px;
+      max-width: 280px;
+      font-size: 11px;
+    }
+    .basestation-popup .title {
+      font-weight: bold;
+      margin-bottom: 8px;
+      padding: 5px 0;
+      text-align: center;
+      border-radius: 4px;
+      background-color: #007bff; 
+      color: white;
+      font-size: 12px;
+    }
+    .basestation-popup .antenna-list {
+      max-height: 200px;
+      overflow-y: auto;
+      margin: 8px 0;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 4px;
+    }
+    .basestation-popup .antenna-item {
+      background: white;
+      border: 1px solid #e9ecef;
+      margin: 4px 0;
+      padding: 6px;
+      border-radius: 3px;
+    }
+    .basestation-popup .antenna-item h4 {
+      margin: 0 0 6px 0;
+      color: #007bff; 
+      font-size: 11px;
+      border-bottom: 1px solid #dee2e6;
+      padding-bottom: 4px;
+    }
+    .basestation-popup .param-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 3px 0;
+      padding: 2px 4px;
+      align-items: center;
+      background-color: #f8f9fa;
+      border-radius: 3px;
+    }
+    .basestation-popup .param-label {
+      font-weight: bold;
+      color: #495057;
+    }
+    .basestation-popup .param-input {
+      width: 60px;
+      padding: 2px 4px;
+      border: 1px solid #ced4da;
+      border-radius: 3px;
+      text-align: right;
+    }
+    .basestation-popup .add-antenna-btn {
+      background: #28a745;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      width: 100%;
+      margin: 8px 0;
+      font-size: 11px;
+      transition: background-color 0.2s;
+    }
+    .basestation-popup .add-antenna-btn:hover {
+      background: #218838;
+    }
+    .basestation-popup .buttons {
+      display: flex;
+      gap: 4px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #dee2e6;
+      justify-content: flex-end;
+    }
+    .basestation-popup .buttons button {
+      padding: 4px 8px;
+      font-size: 11px;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    /* FREQUENCY LEGEND */
+    #frequency-legend {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      z-index: 9999;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 10px 12px;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      font-size: 12px;
+      min-width: 200px;
+      max-width: 280px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.13);
+    }
+    #freq-legend-header {
+      font-weight: bold;
+      font-size: 12px;
+      text-align: center;
+      padding: 2px 0 6px;
+      border-bottom: 1px solid #dee2e6;
+      margin-bottom: 6px;
+      color: #343a40;
+      letter-spacing: 0.3px;
+    }
+    #freq-tiles-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .freq-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      min-width: 46px;
+      border: 1.5px solid transparent;
+      transition: transform 0.12s, box-shadow 0.12s;
+      user-select: none;
+    }
+    .freq-tile:hover { transform: translateY(-2px); box-shadow: 0 3px 8px rgba(0,0,0,0.2); }
+    .freq-tile-free  { background: #d4edda; border-color: #28a745; color: #155724; }
+    .freq-tile-clash { background: #f8d7da; border-color: #dc3545; color: #721c24; }
+    .freq-tile-oob   { border-style: dashed; border-color: #ff8c00 !important; }
+    .freq-tile-free.freq-tile-oob  { background: #fff3e0; color: #7a4800; }
+    .freq-tile-clash.freq-tile-oob { background: #ffded4; }
+    .freq-tile-mhz   { font-size: 8.5px; font-weight: 700; line-height: 1.2; }
+    .freq-tile-count { font-size: 7.5px; opacity: 0.85; line-height: 1; }
+    #freq-info-popup {
+      margin-top: 6px;
+      background: white;
+      border: 1px solid #dee2e6;
+      border-top: 3px solid #007bff;
+      border-radius: 5px;
+      padding: 6px 8px;
+      position: relative;
+    }
+    #freq-info-popup.freq-info-hidden { display: none; }
+    #freq-info-title {
+      font-weight: bold;
+      font-size: 11px;
+      color: #007bff;
+      margin-bottom: 4px;
+    }
+    #freq-info-popup ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-size: 10px;
+      max-height: 80px;
+      overflow-y: auto;
+    }
+    #freq-info-popup li { margin: 2px 0; color: #495057; }
+    #freq-info-close {
+      position: absolute; top: 4px; right: 6px;
+      background: none; border: none; cursor: pointer;
+      font-size: 11px; color: #999; padding: 0; line-height: 1;
+    }
+    #freq-info-close:hover { color: #dc3545; }
+
+    .basestation-tooltip {
+      background: rgba(0, 0, 0, 0.8);
+      border: none;
+      border-radius: 3px;
+      color: white;
+      font-size: 11px;
+      padding: 3px 6px;
+    }
+
+    .antenna-tooltip {
+      background: rgba(128, 128, 128, 0.7);
+      border: none;
+      border-radius: 3px;
+      color: white;
+      font-size: 11px;
+      padding: 3px 6px;
+    }
+
+    .arrow-tooltip {
+      background: rgba(255, 255, 255, 0.9);
+      border: none;
+      border-radius: 3px;
+      color: black;
+      font-size: 11px;
+      padding: 3px 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      pointer-events: none;
+    }
+
+    /* --- MODERN LEAFLET CONTROLS --- */
+    .leaflet-bar {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+      border: none !important;
+      border-radius: 8px !important;
+      overflow: hidden;
+    }
+    .leaflet-bar a {
+      background-color: #fff !important;
+      border-bottom: 1px solid #f0f0f0 !important;
+      width: 36px !important;
+      height: 36px !important;
+      text-align: center !important;
+      background-image: none !important;
+      color: #495057 !important;
+      transition: background-color 0.2s, color 0.2s !important;
+      text-decoration: none !important;
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+    }
+    .leaflet-bar a:hover {
+      background-color: #f1f5ff !important;
+      color: #007bff !important;
+    }
+    .leaflet-bar a:last-child {
+      border-bottom: none !important;
+    }
+    
+    .leaflet-control-zoom-in, 
+    .leaflet-control-zoom-out {
+      font-size: 0 !important; 
+    }
+    .leaflet-control-zoom-in::after { content: "\f067"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-control-zoom-out::after { content: "\f068"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-draw-polygon::after { content: "\f534"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px; }
+    .leaflet-draw-draw-rectangle::after { content: "\f5cb"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-draw-circle::after { content: "\f1db"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-draw-marker::after { content: "\f3c5"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+
+    .leaflet-draw-actions {
+      left: 40px !important; 
+    }
+    .leaflet-draw-actions a {
+      background-color: #343a40 !important;
+      color: white !important;
+      border: none !important;
+      border-radius: 4px !important;
+      margin-left: 4px !important;
+      height: 32px !important;
+      display: flex !important;
+      align-items: center !important;
+      font-size: 12px !important;
+      padding: 0 12px !important;
+      width: auto !important;
+    }
+    .leaflet-draw-actions a:hover {
+      background-color: #212529 !important;
+      color: white !important;
+    }
+
+    /* ── Base-station SVG marker ── */
+    .bs-marker-icon { background: none !important; border: none !important; }
+
+    .antenna-direction-icon {
+      background: none !important;
+      border: none !important;
+      pointer-events: none !important;
+    }
+    .antenna-direction-icon svg {
+      overflow: visible;
+      pointer-events: none;
+    }
+    .antenna-direction-icon .antenna-shaft {
+      pointer-events: stroke;
+    }
+    .antenna-direction-icon .antenna-head {
+      pointer-events: visiblePainted;
+    }
+    .antenna-direction-icon .antenna-origin {
+      pointer-events: none;
+    }
+    .antenna-direction-icon.antenna-direction-disabled .antenna-shaft,
+    .antenna-direction-icon.antenna-direction-disabled .antenna-head,
+    .antenna-direction-icon.antenna-direction-disabled .antenna-origin {
+      pointer-events: none;
+    }
+
+    /* Pointer cursor on clickable map areas */
+    path.leaflet-interactive { cursor: pointer !important; }
+
+    /* Hide native polygon/rectangle/circle buttons (replaced by custom Draw Area control) */
+    a.leaflet-draw-draw-polygon,
+    a.leaflet-draw-draw-rectangle,
+    a.leaflet-draw-draw-circle { display: none !important; }
+
+    /* Draw Area custom control */
+    .draw-area-control { position: relative; overflow: visible !important; }
+    .draw-area-main-btn {
+      font-size: 0 !important;
+    }
+    .draw-area-main-btn::after {
+      content: "\f5ee";
+      font-family: "Font Awesome 6 Free";
+      font-weight: 900;
+      font-size: 15px;
+    }
+    .draw-area-submenu {
+      position: absolute;
+      left: 42px;
+      top: 0;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+      z-index: 1000;
+      white-space: nowrap;
+      overflow: hidden;
+      border: none;
+    }
+    .draw-area-submenu.hidden { display: none; }
+    .draw-area-submenu a {
+      display: flex !important;
+      align-items: center !important;
+      gap: 7px;
+      padding: 0 14px !important;
+      height: 36px !important;
+      width: auto !important;
+      font-size: 12px !important;
+      color: #495057 !important;
+      border-bottom: 1px solid #f0f0f0 !important;
+      text-decoration: none;
+      cursor: pointer;
+      background: #fff !important;
+      transition: background 0.15s, color 0.15s;
+    }
+    .draw-area-submenu a:last-child { border-bottom: none !important; }
+    .draw-area-submenu a:hover { background: #f1f5ff !important; color: #007bff !important; }
+
+    /* ── Custom Antenna Modal ── */
+    #modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(3px);
+    }
+    #modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+      min-width: 300px;
+      max-width: 380px;
+      width: 90%;
+      overflow: hidden;
+      animation: modal-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes modal-pop {
+      from { transform: scale(0.88); opacity: 0; }
+      to   { transform: scale(1);    opacity: 1; }
+    }
+    .modal-header {
+      background: linear-gradient(135deg, #0056b3 0%, #007bff 100%);
+      color: white;
+      padding: 16px 20px 12px;
+    }
+    .modal-header-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .modal-header-top .mh-icon { font-size: 20px; }
+    .modal-header-top h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .2px; }
+    .modal-az-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 12px;
+    }
+    .modal-az-badge .az-val { font-weight: 700; font-size: 13px; }
+    .modal-body { padding: 18px 20px 6px; }
+    .modal-field { margin-bottom: 15px; }
+    .modal-field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 5px;
+    }
+    .modal-input-row {
+      display: flex;
+      align-items: stretch;
+      border: 1.5px solid #dee2e6;
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .modal-input-row:focus-within {
+      border-color: #007bff;
+      box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.13);
+    }
+    .modal-input-row input[type=number] {
+      border: none;
+      outline: none;
+      padding: 9px 12px;
+      font-size: 14px;
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+    }
+    .modal-input-row .input-unit {
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6c757d;
+      background: #f8f9fa;
+      border-left: 1.5px solid #dee2e6;
+      display: flex;
+      align-items: center;
+      user-select: none;
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      background: #f8f9fa;
+      border-top: 1px solid #e9ecef;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .modal-btn {
+      padding: 8px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      margin-bottom: 0;
+    }
+    .modal-btn:active { transform: scale(0.97); }
+    .modal-btn-confirm { background: #007bff; color: #fff; }
+    .modal-btn-confirm:hover { background: #0056b3; }
+    .modal-btn-dismiss { background: #e9ecef; color: #495057; }
+    .modal-btn-dismiss:hover { background: #dee2e6; }
+
+    /* ── Toast notifications ── */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 10500;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-msg {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
+      padding: 12px 16px;
+      font-size: 13px;
+      min-width: 220px;
+      max-width: 360px;
+      pointer-events: auto;
+      animation: toast-slide 0.28s ease forwards;
+    }
+    .toast-msg.removing { animation: toast-fade 0.3s ease forwards; }
+    @keyframes toast-slide {
+      from { transform: translateX(110%); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+    @keyframes toast-fade {
+      to { opacity: 0; transform: translateX(30px); }
+    }
+    .toast-msg.success { border-left: 4px solid #28a745; }
+    .toast-msg.error   { border-left: 4px solid #dc3545; }
+    .toast-msg.warning { border-left: 4px solid #ffc107; }
+    .toast-msg.info    { border-left: 4px solid #007bff; }
+    .toast-icon { font-size: 15px; flex-shrink: 0; }
+    .toast-msg.success .toast-icon { color: #28a745; }
+    .toast-msg.error   .toast-icon { color: #dc3545; }
+    .toast-msg.warning .toast-icon { color: #e0a800; }
+    .toast-msg.info    .toast-icon { color: #007bff; }
+
+    /* ── Save / Change-location Leaflet controls ── */
+    .save-control-btn { font-size: 0 !important; }
+    .save-control-btn::after {
+      content: "\f0c7";
+      font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px;
+      color: #28a745;
+    }
+    .changeloc-control-btn { font-size: 0 !important; }
+    .changeloc-control-btn::after {
+      content: "\f002";
+      font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px;
+      color: #6c757d;
+    }
+    .place-marker-control-btn { font-size: 0 !important; }
+    .place-marker-control-btn::after {
+      content: "\f3c5";
+      font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px;
+      color: #495057;
+    }
+
+    /* ── Startup overlay ── */
+    #startup-overlay {
+      position: fixed;
+      inset: 0;
+      background: linear-gradient(150deg, #eef6ff 0%, #d4e9ff 100%);
+      z-index: 10100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #startup-overlay.hidden { display: none; }
+    .startup-card {
+      position: relative;
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 16px 60px rgba(0, 0, 0, 0.16);
+      padding: 44px 48px 36px;
+      width: 90%;
+      max-width: 500px;
+      text-align: center;
+      animation: modal-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .startup-close-btn {
+      position: absolute; top: 14px; right: 16px;
+      background: none !important; border: none; font-size: 20px; cursor: pointer;
+      color: #adb5bd; line-height: 1; padding: 0; margin: 0;
+      transition: color 0.15s;
+    }
+    .startup-close-btn:hover { color: #495057 !important; background: none !important; }
+    .startup-card-icon { font-size: 52px; color: #007bff; margin-bottom: 14px; }
+    .startup-card h2 { margin: 0 0 8px; font-size: 22px; font-weight: 700; color: #0056b3; }
+    .startup-card > p { margin: 0 0 28px; font-size: 13px; color: #6c757d; line-height: 1.65; }
+    .startup-card #startLeft {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .startup-card #locationWrapper {
+      display: block;
+      width: 100%;
+      position: relative;
+    }
+    .startup-card #locationWrapper input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 11px 14px;
+      font-size: 14px;
+      border: 1.5px solid #ced4da;
+      border-radius: 8px;
+      min-width: unset;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .startup-card #locationWrapper input:focus {
+      border-color: #007bff;
+      box-shadow: 0 0 0 3px rgba(0,123,255,0.12);
+    }
+    .startup-card #startLeft button {
+      width: 100%;
+      padding: 11px;
+      font-size: 14px;
+      border-radius: 8px;
+      margin-bottom: 0;
+    }
+    .startup-card #startMessage { font-size: 13px; color: #555; text-align: center; min-height: 18px; }
+  </style>
+</head>
+<body>
+
+  <!-- Startup overlay -->
+  <div id="startup-overlay">
+    <div class="startup-card">
+      <button class="startup-close-btn hidden" id="startup-close-btn" title="Back to map">&#x2715;</button>
+      <div class="startup-card-icon"><i class="fa-solid fa-map-location-dot"></i></div>
+      <h2>GeoJSON Scenario Creator</h2>
+      <p>Search for a city or location to open the map and start building your coverage scenario.</p>
+      <div id="startLeft">
+        <div id="locationWrapper">
+          <input id="locationInput" type="text" placeholder="e.g., Milan, Italy" autocomplete="off" />
+          <div id="suggestions" class="hidden"></div>
+        </div>
+        <button id="startBtn"><i class="fa-solid fa-magnifying-glass"></i>&nbsp; Search &amp; open map</button>
+        <button id="startDefaultBtn" class="secondary-btn"><i class="fa-solid fa-globe"></i>&nbsp; Use default view</button>
+        <span id="startMessage"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help panel (toggled by "?" map control) -->
+  <div id="help-panel">
+    <button class="help-close" onclick="document.getElementById('help-panel').classList.remove('open')" title="Close">✕</button>
+    <h3>How to use</h3>
+    <ol>
+      <li>Pan the map to find your area of interest.</li>
+      <li>Use the drawing tools:
+        <ul>
+          <li><strong>Marker</strong> → Place a base station.</li>
+          <li><strong>Polygon / Rectangle / Circle</strong> → Draw your area of interest.</li>
+        </ul>
+      </li>
+      <li>For base stations you can add multiple antennas by clicking on the base station.</li>
+      <li>Click on the area drawn to view its properties.</li>
+      <li>When done, click <strong>Save GeoJSON</strong> to store the scenario.</li>
+    </ol>
+  </div>
+
+  <div id="map-container" class="hidden">
+    <div id="map"></div>
+
+    <!-- FREQUENCY LEGEND -->
+    <div id="frequency-legend">
+      <div id="freq-legend-header">Frequency Usage</div>
+      <div id="freq-tiles-grid"></div>
+      <div id="freq-info-popup" class="freq-info-hidden">
+        <button id="freq-info-close" onclick="document.getElementById('freq-info-popup').classList.add('freq-info-hidden')">✕</button>
+        <div id="freq-info-title"></div>
+        <ul id="freq-info-list"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Antenna Modal -->
+  <div id="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-header-top">
+          <i class="fa-solid fa-tower-cell mh-icon"></i>
+          <h3>New Antenna</h3>
+        </div>
+        <div class="modal-az-badge">
+          Azimuth &nbsp;<span class="az-val" id="modal-az-display">0°</span>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label><i class="fa-solid fa-wifi"></i>&nbsp; Frequency</label>
+          <div class="modal-input-row">
+            <input id="modal-freq" type="number" value="3560" step="1" min="1" />
+            <span class="input-unit">MHz</span>
+          </div>
+        </div>
+        <div class="modal-field">
+          <label><i class="fa-solid fa-bolt"></i>&nbsp; TX Power</label>
+          <div class="modal-input-row">
+            <input id="modal-ptx" type="number" value="47" step="0.1" />
+            <span class="input-unit">dBm</span>
+          </div>
+        </div>
+        <div class="modal-field">
+          <label><i class="fa-solid fa-signal"></i>&nbsp; TX Gain</label>
+          <div class="modal-input-row">
+            <input id="modal-gtx" type="number" value="19.5" step="0.1" />
+            <span class="input-unit">dBi</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn modal-btn-dismiss" id="modal-cancel">Cancel</button>
+        <button class="modal-btn modal-btn-confirm" id="modal-ok">
+          <i class="fa-solid fa-plus"></i>&nbsp; Add Antenna
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Leaflet.draw JS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <!-- Path dragging (to move polygons/circles) -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet.path.drag@0.0.6/src/Path.Drag.min.js"></script>
+  <!-- Leaflet Geometry Util for area calculations -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-geometryutil/0.9.3/leaflet.geometryutil.min.js"></script>
+
+  <script>
+
+    let map;
+    let drawnItems;
+    let drawControl;
+    let mapInitialized = false;
+
+    const defaultView = { lat: 42.900764, lon: -78.865053, zoom: 13 };
+
+    function resetScenarioState() {
+      baseStationCounter = 0;
+
+      Object.keys(centroidMarkersMap).forEach(key => {
+        if (centroidMarkersMap[key] && map) {
+          map.removeLayer(centroidMarkersMap[key]);
+        }
+        delete centroidMarkersMap[key];
+      });
+
+      Object.keys(circleCentersMap).forEach(key => {
+        if (circleCentersMap[key] && map) {
+          map.removeLayer(circleCentersMap[key]);
+        }
+        delete circleCentersMap[key];
+      });
+    }
+
+    function resetMapInstance() {
+      if (map) {
+        map.off();
+        map.remove();
+      }
+      map = null;
+      drawnItems = null;
+      drawControl = null;
+      mapInitialized = false;
+    }
+
+    function initMap(lat, lon, zoom, bounds) {
+      if (mapInitialized) {
+        resetMapInstance();
+      }
+      mapInitialized = true;
+
+      map = L.map('map');
+      map.setView([lat, lon], zoom);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+
+      drawnItems = new L.FeatureGroup();
+      map.addLayer(drawnItems);
+
+      drawControl = new L.Control.Draw({
+        draw: {
+          polygon: {
+            shapeOptions: {
+              color: '#0080FF',
+              fillColor: '#0080FF',
+              fillOpacity: 0.2,
+              weight: 2
+            }
+          },
+          rectangle: {
+            shapeOptions: {
+              color: '#0080FF',
+              fillColor: '#0080FF',
+              fillOpacity: 0.2,
+              weight: 2
+            }
+          },
+          circle: {
+            shapeOptions: {
+              color: '#0080FF',
+              fillColor: '#0080FF',
+              fillOpacity: 0.2,
+              weight: 2
+            }
+          },
+          marker: false,
+          polyline: false,
+          circlemarker: false
+        },
+        edit: false
+      });
+      map.addControl(drawControl);
+
+      // Custom "Place Base Station" marker control
+      const PlaceMarkerControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'place-marker-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Place base station';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            new L.Draw.Marker(map).enable();
+          });
+          return container;
+        }
+      });
+      map.addControl(new PlaceMarkerControl());
+
+      // Custom "Draw Area" control: single button that expands into Polygon/Rectangle/Circle sub-options.
+      const DrawAreaControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function(m) {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control draw-area-control');
+
+          const btn = L.DomUtil.create('a', 'draw-area-main-btn', container);
+          btn.href = '#';
+          btn.title = 'Draw area';
+          L.DomEvent.disableClickPropagation(btn);
+
+          const submenu = L.DomUtil.create('div', 'draw-area-submenu hidden', container);
+          L.DomEvent.disableClickPropagation(submenu);
+
+          const shapes = [
+            { label: '<i class="fa-solid fa-draw-polygon"></i>&nbsp; Polygon',    type: 'polygon'   },
+            { label: '<i class="fa-solid fa-vector-square"></i>&nbsp; Rectangle', type: 'rectangle' },
+            { label: '<i class="fa-regular fa-circle"></i>&nbsp; Circle',         type: 'circle'    }
+          ];
+          shapes.forEach(s => {
+            const item = L.DomUtil.create('a', '', submenu);
+            item.href = '#';
+            item.innerHTML = s.label;
+            L.DomEvent.on(item, 'click', function(e) {
+              L.DomEvent.stop(e);
+              submenu.classList.add('hidden');
+              drawControl._toolbars.draw._modes[s.type].handler.enable();
+            });
+          });
+
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            submenu.classList.toggle('hidden');
+          });
+
+          m.on('click mousedown', function() { submenu.classList.add('hidden'); });
+
+          return container;
+        }
+      });
+      map.addControl(new DrawAreaControl());
+
+      // Save GeoJSON control
+      const SaveControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'save-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Save GeoJSON';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            saveGeoJSON();
+          });
+          return container;
+        }
+      });
+      map.addControl(new SaveControl());
+
+      // Change location control — shows startup overlay again (resets map)
+      const ChangeLocControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'changeloc-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Change location';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            showStartupOverlay();
+          });
+          return container;
+        }
+      });
+      map.addControl(new ChangeLocControl());
+
+      // "?" help control — toggles the #help-panel positioned next to the toolbar
+      const HelpControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'help-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Help';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            document.getElementById('help-panel').classList.toggle('open');
+          });
+          return container;
+        }
+      });
+      map.addControl(new HelpControl());
+
+      if (bounds) {
+        map.fitBounds(bounds);
+      }
+
+      resetScenarioState();
+      updateFrequencyLegend();
+
+      map.on(L.Draw.Event.CREATED, function (e) {
+        const layer = e.layer;
+        drawnItems.addLayer(layer);
+
+        // Aggiungiamo questa parte per assicurarci che i poligoni abbiano il tipo corretto
+        if (layer instanceof L.Polygon || layer instanceof L.Rectangle || layer instanceof L.Circle) {
+          layer.feature = {
+            type: "Feature",
+            properties: {
+              type: "area_of_interest"
+            }
+          };
+        }
+
+        if (layer instanceof L.Marker) {
+          initializeMarker(layer);
+        } else if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
+          initializePolygon(layer);
+        } else if (layer instanceof L.Circle) {
+          initializeCircle(layer);
+        }
+
+        layer.on('click', function() {
+          if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
+            showAreaDetails(layer);
+          } else if (layer instanceof L.Circle) {
+            showCircleDetails(layer);
+          }
+        });
+      });
+
+      map.on('layeradd', updateFrequencyLegend);
+      map.on('layerremove', updateFrequencyLegend);
+
+      // Close any open popup when the user activates a draw tool
+      map.on(L.Draw.Event.DRAWSTART, function () {
+        map.closePopup();
+      });
+    }
+
+    function showMapAt(lat, lon, bounds) {
+      initMap(lat, lon, defaultView.zoom, bounds);
+      document.getElementById("map-container").classList.remove("hidden");
+      document.getElementById("startup-overlay").classList.add("hidden");
+      startMessage.textContent = "";
+      mapIsOpen = true;
+      clearSuggestions();
+    }
+
+    let mapIsOpen = false;
+
+    function showStartupOverlay() {
+      const overlay = document.getElementById('startup-overlay');
+      overlay.classList.remove('hidden');
+      const closeBtn = document.getElementById('startup-close-btn');
+      if (closeBtn) closeBtn.classList.toggle('hidden', !mapIsOpen);
+    }
+
+    function startWithDefaultView() {
+      showMapAt(defaultView.lat, defaultView.lon);
+    }
+
+    const startBtn = document.getElementById("startBtn");
+    const startDefaultBtn = document.getElementById("startDefaultBtn");
+    const locationInput = document.getElementById("locationInput");
+    const startMessage = document.getElementById("startMessage");
+    const suggestionsEl = document.getElementById("suggestions");
+    const locationWrapper = document.getElementById("locationWrapper");
+
+    let suggestTimer = null;
+    let suggestRequestId = 0;
+    const suggestCache = new Map();
+
+    function clearSuggestions() {
+      suggestionsEl.innerHTML = "";
+      suggestionsEl.classList.add("hidden");
+    }
+
+    function locationResultToBounds(loc) {
+      if (loc.boundingbox && loc.boundingbox.length === 4) {
+        const south = parseFloat(loc.boundingbox[0]);
+        const north = parseFloat(loc.boundingbox[1]);
+        const west = parseFloat(loc.boundingbox[2]);
+        const east = parseFloat(loc.boundingbox[3]);
+        return [[south, west], [north, east]];
+      }
+      if (loc.extent && loc.extent.length === 4) {
+        const west = Math.min(loc.extent[0], loc.extent[2]);
+        const east = Math.max(loc.extent[0], loc.extent[2]);
+        const south = Math.min(loc.extent[1], loc.extent[3]);
+        const north = Math.max(loc.extent[1], loc.extent[3]);
+        return [[south, west], [north, east]];
+      }
+      return null;
+    }
+
+    function applyLocationResult(loc) {
+      const lat = parseFloat(loc.lat);
+      const lon = parseFloat(loc.lon);
+      const bounds = locationResultToBounds(loc);
+      showMapAt(lat, lon, bounds);
+    }
+
+    function toLowerSafe(v) {
+      return (v || "").toString().toLowerCase();
+    }
+
+    function getPrimaryLabel(loc) {
+      if (loc && loc.name) {
+        return loc.name;
+      }
+      const dn = (loc && loc.display_name) ? loc.display_name : "";
+      const first = dn.split(",")[0];
+      return (first || dn || "").trim();
+    }
+
+    function getSecondaryLabel(loc) {
+      const dn = (loc && loc.display_name) ? loc.display_name : "";
+      const parts = dn.split(",").map(p => p.trim()).filter(Boolean);
+      if (parts.length <= 1) {
+        return "";
+      }
+      return parts.slice(1, 3).join(", ");
+    }
+
+    function placeTypeWeight(loc) {
+      const cls = toLowerSafe(loc && loc.class);
+      const type = toLowerSafe(loc && loc.type);
+      if (cls === "place") {
+        if (type === "city") return 10;
+        if (type === "town") return 8;
+        if (type === "village") return 4;
+        if (type === "hamlet") return 2;
+        if (type === "municipality") return 7;
+        if (type === "locality") return 2;
+        if (type === "suburb" || type === "quarter" || type === "neighbourhood") return 1;
+      }
+      if (cls === "boundary" && type === "administrative") return 6;
+      return 0;
+    }
+
+    function computeSuggestionScore(loc, qLower) {
+      const primary = toLowerSafe(getPrimaryLabel(loc));
+      const dn = toLowerSafe(loc && loc.display_name);
+      const importance = Number(loc && loc.importance) || 0;
+      const rank = Number(loc && loc.place_rank) || 0;
+
+      let score = 0;
+      if (primary.startsWith(qLower)) score += 20;
+      else if (dn.startsWith(qLower)) score += 12;
+      else if (dn.includes(qLower)) score += 4;
+
+      score += placeTypeWeight(loc);
+      score += Math.min(12, importance * 12);
+      score += Math.min(4, rank / 10);
+
+      // Light penalty for extremely short exact matches (often small hamlets)
+      if (qLower.length <= 3 && primary === qLower) {
+        score -= 3;
+      }
+
+      return score;
+    }
+
+    function rankAndTrimSuggestions(results, query) {
+      const q = query.trim();
+      const qLower = toLowerSafe(q);
+      const arr = Array.isArray(results) ? results : [];
+
+      const qLen = q.length;
+      // For very short queries, Nominatim tends to return many tiny places that just share the prefix.
+      // Filter those out to keep suggestions aligned with the "city/location" intent.
+      const shortFiltered = (qLen <= 3)
+        ? arr.filter(loc => {
+            const w = placeTypeWeight(loc);
+            const importance = Number(loc && loc.importance) || 0;
+            return w >= 6 || importance >= 0.5;
+          })
+        : arr;
+
+      const base = (qLen <= 3 && shortFiltered.length > 0) ? shortFiltered : arr;
+
+      const scored = base
+        .map(loc => ({ loc, score: computeSuggestionScore(loc, qLower) }))
+        .sort((a, b) => b.score - a.score);
+
+      const seen = new Set();
+      const out = [];
+      for (const entry of scored) {
+        const loc = entry.loc;
+        const key = toLowerSafe(getPrimaryLabel(loc)) + "|" + toLowerSafe(loc && loc.address && loc.address.country_code);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(loc);
+        if (out.length >= 8) break;
+      }
+      return out;
+    }
+
+    function buildPhotonDisplayName(props) {
+      const parts = [];
+      if (props.name) parts.push(props.name);
+      if (props.city && props.city !== props.name) parts.push(props.city);
+      if (props.county) parts.push(props.county);
+      if (props.state) parts.push(props.state);
+      if (props.country) parts.push(props.country);
+      return parts.filter(Boolean).join(", ");
+    }
+
+    function photonFeatureToLocation(feature) {
+      if (!feature || !feature.geometry || !feature.geometry.coordinates) {
+        return null;
+      }
+      const coords = feature.geometry.coordinates;
+      const props = feature.properties || {};
+      const loc = {
+        lat: coords[1],
+        lon: coords[0],
+        name: props.name || "",
+        display_name: buildPhotonDisplayName(props),
+        class: props.osm_key || "place",
+        type: props.type || props.osm_value || "",
+        importance: Number(props.importance) || 0,
+        extent: Array.isArray(props.extent) ? props.extent : null,
+        address: {
+          city: props.city,
+          county: props.county,
+          state: props.state,
+          country: props.country,
+          country_code: props.countrycode
+        }
+      };
+      return loc;
+    }
+
+    function fetchPhotonLocations(query, requestId) {
+      const url = "https://photon.komoot.io/api/?limit=20&q=" + encodeURIComponent(query.trim());
+      return fetch(url, { headers: { "Accept": "application/json" } })
+        .then(r => r.json())
+        .then(data => {
+          if (requestId && requestId !== suggestRequestId) {
+            return [];
+          }
+          const features = data && Array.isArray(data.features) ? data.features : [];
+          return features.map(photonFeatureToLocation).filter(Boolean);
+        });
+    }
+
+    function fetchNominatimLocations(query, limit) {
+      const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=" +
+        encodeURIComponent(limit) + "&addressdetails=1&dedupe=1&accept-language=en&q=" +
+        encodeURIComponent(query.trim());
+      return fetch(url, { headers: { "Accept": "application/json" } })
+        .then(r => r.json())
+        .then(data => Array.isArray(data) ? data : []);
+    }
+
+    function renderSuggestions(results) {
+      suggestionsEl.innerHTML = "";
+      if (!results || results.length === 0) {
+        clearSuggestions();
+        return;
+      }
+      results.forEach(loc => {
+        const item = document.createElement("div");
+        item.className = "suggestion-item";
+        const primary = getPrimaryLabel(loc);
+        const secondary = getSecondaryLabel(loc);
+
+        const primaryEl = document.createElement("div");
+        primaryEl.style.fontWeight = "600";
+        primaryEl.textContent = primary;
+        item.appendChild(primaryEl);
+
+        if (secondary) {
+          const secondaryEl = document.createElement("div");
+          secondaryEl.style.fontSize = "12px";
+          secondaryEl.style.color = "#666";
+          secondaryEl.textContent = secondary;
+          item.appendChild(secondaryEl);
+        }
+        item.onclick = function () {
+          const primaryValue = primary || (loc.display_name || "");
+          locationInput.value = primaryValue;
+          startMessage.textContent = "";
+          clearSuggestions();
+          applyLocationResult(loc);
+        };
+        suggestionsEl.appendChild(item);
+      });
+      suggestionsEl.classList.remove("hidden");
+    }
+
+    function fetchSuggestions(query) {
+      const q = query.trim();
+      if (q.length < 1) {
+        clearSuggestions();
+        return;
+      }
+
+      if (suggestCache.has(q)) {
+        renderSuggestions(suggestCache.get(q));
+        return;
+      }
+
+      const requestId = ++suggestRequestId;
+      fetchPhotonLocations(q, requestId)
+        .then(results => {
+          if (requestId !== suggestRequestId) {
+            return;
+          }
+          const ranked = rankAndTrimSuggestions(results, q);
+          suggestCache.set(q, ranked);
+          renderSuggestions(ranked);
+        })
+        .catch(err => {
+          console.error("Error fetching suggestions:", err);
+          clearSuggestions();
+        });
+    }
+
+    startBtn.onclick = function () {
+      const query = locationInput.value.trim();
+      if (!query) {
+        startMessage.textContent = "Enter a city or location.";
+        return;
+      }
+
+      startMessage.textContent = "Searching...";
+
+      fetchPhotonLocations(query)
+        .then(results => {
+          const ranked = rankAndTrimSuggestions(results, query);
+          if (ranked && ranked.length > 0) {
+            applyLocationResult(ranked[0]);
+            return;
+          }
+
+          return fetchNominatimLocations(query, 10).then(nominatimResults => {
+            if (!nominatimResults || nominatimResults.length === 0) {
+              startMessage.textContent = "No results found. Use the default view.";
+              return;
+            }
+            const fallbackRanked = rankAndTrimSuggestions(nominatimResults, query);
+            applyLocationResult((fallbackRanked && fallbackRanked[0]) ? fallbackRanked[0] : nominatimResults[0]);
+          });
+        })
+        .catch(err => {
+          console.error("Error searching location:", err);
+          startMessage.textContent = "Search failed. Use the default view.";
+        });
+    };
+
+    startDefaultBtn.onclick = function () {
+      startWithDefaultView();
+    };
+
+    locationInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        startBtn.click();
+      }
+    });
+
+    locationInput.addEventListener("input", function () {
+      const query = locationInput.value;
+      if (suggestTimer) {
+        clearTimeout(suggestTimer);
+      }
+
+      const trimmedLen = query.trim().length;
+      const delayMs = trimmedLen <= 2 ? 450 : 250;
+      suggestTimer = setTimeout(() => fetchSuggestions(query), delayMs);
+    });
+
+    document.addEventListener("click", function (e) {
+      if (!locationWrapper.contains(e.target)) {
+        clearSuggestions();
+      }
+    });
+
+    //-------------------------------------------------
+    // 2) Utility Functions: Azimuth and Direction Lines
+    //-------------------------------------------------
+    function calculateAzimuth(lat1, lon1, lat2, lon2) {
+      const rad = Math.PI / 180;
+      lat1 *= rad; 
+      lon1 *= rad;
+      lat2 *= rad; 
+      lon2 *= rad;
+      const deltaLon = lon2 - lon1;
+      const y = Math.sin(deltaLon) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) - 
+                Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLon);
+      const brng = Math.atan2(y, x) * (180 / Math.PI);
+      return (brng + 360) % 360;
+    }
+
+    let antennaPlacementInProgress = false;
+
+    function setAntennaDirectionInteractivity(enabled) {
+      map.eachLayer(layer => {
+        if (!(layer instanceof L.Marker) || !layer._isAntennaDirectionMarker) {
+          return;
+        }
+
+        layer.closeTooltip();
+
+        const el = layer.getElement();
+        if (el) {
+          el.classList.toggle('antenna-direction-disabled', !enabled);
+        }
+      });
+    }
+
+    function drawAntennaDirection(lat, lon, azimuth, color, bsNumber, antNumber, isGhost = false) {
+      // Fixed-pixel SVG arrow: always the same visual size regardless of zoom level.
+      // The SVG viewBox centres (0,0) at the icon anchor (geo-coordinate).
+      // CSS rotation turns the arrow to match the azimuth (clockwise from North).
+      const opacity = isGhost ? 0.45 : 1.0;
+      const arrowHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"
+           viewBox="-60 -60 120 120"
+           style="display:block;
+                  transform:rotate(${azimuth}deg);
+                  opacity:${opacity};
+                  filter:drop-shadow(0 1px 3px rgba(0,0,0,.4));
+                  pointer-events:none;">
+        <!-- Shaft from BS center (0,0) upward -->
+        <line class="antenna-shaft" x1="0" y1="0" x2="0" y2="-42"
+              stroke="${color}" stroke-width="3" stroke-linecap="round"/>
+        <!-- Filled arrowhead -->
+        <polygon class="antenna-head" points="0,-58 -9,-42 9,-42" fill="${color}"/>
+        <!-- Small circle at origin (BS position) -->
+        <circle class="antenna-origin" cx="0" cy="0" r="3.5" fill="${color}"/>
+      </svg>`;
+
+      const icon = L.divIcon({
+        html: arrowHtml,
+        className: 'antenna-direction-icon',
+        iconSize:   [120, 120],
+        iconAnchor: [60, 60]   // centre of SVG = geo-coordinate
+      });
+
+      // zIndexOffset: -1000 keeps the arrow behind the BS tower marker so BS clicks aren't intercepted.
+      const marker = L.marker([lat, lon], { icon, interactive: true, keyboard: false, zIndexOffset: -1000 });
+      marker._isAntennaDirectionMarker = true;
+      marker.bindTooltip(`BS #${bsNumber} – Antenna #${antNumber}`, {
+        permanent: false,
+        sticky: true,
+        className: 'arrow-tooltip',
+        opacity: 1
+      });
+        marker.on('mouseover', function() {
+        if (antennaPlacementInProgress) {
+          return;
+        }
+          marker.openTooltip();
+        });
+        marker.on('mouseout', function() {
+          marker.closeTooltip();
+        });
+      marker.addTo(map);
+
+      return L.layerGroup([marker]);
+    }
+
+    //-------------------------------------------------
+    // 2.5) UI Utilities: icon, modal, toast
+    //-------------------------------------------------
+    function createBSIcon(bsNumber) {
+      const c = '#0056b3';
+      // Cell-tower shape: triangular lattice tower with signal arcs at top and number badge at base.
+      // iconAnchor at [20, 46] (base platform centre) — antenna arrows originate from here.
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="60" viewBox="0 0 40 60">
+  <defs>
+    <filter id="bsshadow${bsNumber}" x="-40%" y="-10%" width="180%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.5" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <g filter="url(#bsshadow${bsNumber})">
+    <!-- Signal arcs -->
+    <path d="M14,12 Q20,6 26,12"  fill="none" stroke="${c}" stroke-width="2.2" stroke-linecap="round"/>
+    <path d="M10,16 Q20,7 30,16"  fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" opacity=".65"/>
+    <!-- Mast -->
+    <line x1="20" y1="12" x2="20" y2="20" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- Tower legs -->
+    <line x1="20" y1="20" x2="7"  y2="46" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="20" y1="20" x2="33" y2="46" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- Cross braces -->
+    <line x1="13.5" y1="31" x2="26.5" y2="31" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="10.5" y1="39" x2="29.5" y2="39" stroke="${c}" stroke-width="1.8" stroke-linecap="round"/>
+    <!-- Base platform -->
+    <line x1="4" y1="46" x2="36" y2="46"  stroke="${c}" stroke-width="3"   stroke-linecap="round"/>
+    <!-- Number badge -->
+    <circle cx="20" cy="54" r="6" fill="${c}"/>
+    <text x="20" y="58" text-anchor="middle" font-family="Arial,sans-serif" font-size="9" font-weight="bold" fill="white">${bsNumber}</text>
+  </g>
+</svg>`;
+      return L.divIcon({
+        html: svg,
+        className: 'bs-marker-icon',
+        iconSize: [40, 60],
+        iconAnchor: [20, 46],
+        popupAnchor: [0, -50]
+      });
+    }
+
+    function showAntennaModal(azimuth) {
+      return new Promise(resolve => {
+        document.getElementById('modal-az-display').textContent = azimuth + '°';
+        document.getElementById('modal-freq').value = 3560;
+        document.getElementById('modal-ptx').value  = 47;
+        document.getElementById('modal-gtx').value  = 19.5;
+
+        const overlay = document.getElementById('modal-overlay');
+        overlay.classList.add('active');
+        setTimeout(() => {
+          document.getElementById('modal-freq').focus();
+          document.getElementById('modal-freq').select();
+        }, 60);
+
+        function onOk() {
+          const freq = parseFloat(document.getElementById('modal-freq').value) || 3560;
+          const ptx  = parseFloat(document.getElementById('modal-ptx').value)  || 47;
+          const gtx  = parseFloat(document.getElementById('modal-gtx').value)  || 19.5;
+          cleanup();
+          resolve({ freq, ptx, gtx });
+        }
+        function onCancel() { cleanup(); resolve(null); }
+        function onKey(e) {
+          if (e.key === 'Enter')  onOk();
+          if (e.key === 'Escape') onCancel();
+        }
+        function cleanup() {
+          overlay.classList.remove('active');
+          document.getElementById('modal-ok').removeEventListener('click', onOk);
+          document.getElementById('modal-cancel').removeEventListener('click', onCancel);
+          document.removeEventListener('keydown', onKey);
+        }
+        document.getElementById('modal-ok').addEventListener('click', onOk);
+        document.getElementById('modal-cancel').addEventListener('click', onCancel);
+        document.addEventListener('keydown', onKey);
+      });
+    }
+
+    function showToast(message, type = 'info', duration = 3200) {
+      const icons = { success: '✔', error: '✖', warning: '⚠', info: 'ℹ' };
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg ${type}`;
+      el.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.classList.add('removing');
+        setTimeout(() => el.remove(), 320);
+      }, duration);
+    }
+
+    //-------------------------------------------------
+    // 3) Base Station Management
+    //-------------------------------------------------
+    let baseStationCounter = 0;  // Global counter for base stations
+
+    function refreshBaseStationNumbers() {
+      let currentCount = 0;
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker && 
+            layer.feature && 
+            layer.feature.properties.type === "basestation") {
+          currentCount++;
+          layer.feature.properties.bsNumber = currentCount;
+          layer.setIcon(createBSIcon(currentCount));
+        }
+      });
+      baseStationCounter = currentCount;
+    }
+
+    function updateBaseStationLabels() {
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker && 
+            layer.feature && 
+            layer.feature.properties.type === "basestation") {
+          const markerId = layer._leaflet_id;
+          const p = layer.feature.properties;
+          const content = `
+              <div class="basestation-popup">
+                  <div class="title">Base Station #${p.bsNumber}</div>
+                  <div class="param-row">
+                      <span class="param-label">Height:</span>
+                      <input id="bs-height-${markerId}" class="param-input" type="number" 
+                             value="${p.height}" step="0.1" /> m
+                  </div>
+                  <div class="antenna-list">
+                      ${p.antennas.map((ant, idx) => `
+                          <div class="antenna-item">
+                              <h4>Antenna #${idx + 1}</h4>
+                              <div class="param-row">
+                                  <span class="param-label">Azimuth (°):</span>
+                                  <input id="bs-az-${markerId}-${idx}" class="param-input" type="number"
+                                         step="1" min="0" max="360" value="${ant.azimuth}" />
+                              </div>
+                              <div class="param-row">
+                                  <span class="param-label">Freq (MHz):</span>
+                                  <input id="bs-freq-${markerId}-${idx}" class="param-input" type="number"
+                                         step="1" min="1" value="${ant.frequency}" />
+                              </div>
+                              <div class="param-row">
+                                  <span class="param-label">TX Power (dBm):</span>
+                                  <input id="bs-ptx-${markerId}-${idx}" class="param-input" type="number"
+                                         step="0.1" value="${ant.Ptx}" />
+                              </div>
+                              <div class="param-row">
+                                  <span class="param-label">TX Gain (dBi):</span>
+                                  <input id="bs-gtx-${markerId}-${idx}" class="param-input" type="number"
+                                         step="0.1" value="${ant.Gtx}" />
+                              </div>
+                              <div style="display:flex;gap:4px;margin-top:5px;">
+                                <button onclick="updateAntennaInBS(${markerId},${idx})"
+                                        style="background:#28a745;color:white;border:none;padding:3px 6px;
+                                               border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                                  Save
+                                </button>
+                                <button onclick="deleteAntennaFromBS(${markerId},${idx})"
+                                        style="background:#dc3545;color:white;border:none;padding:3px 6px;
+                                               border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                                  Delete
+                                </button>
+                              </div>
+                          </div>
+                      `).join('')}
+                  </div>
+                  <button class="add-antenna-btn" onclick="addAntennaToBS(${markerId})">
+                      Add New Antenna
+                  </button>
+                  <div class="buttons">
+                      <button style="background:#28a745;color:white;" onclick="updateBaseStation(${markerId})">Save</button>
+                      <button style="background:#ffc107;color:black;" onclick="moveBaseStation(${markerId})">Move</button>
+                      <button style="background:#dc3545;color:white;" onclick="deleteBaseStation(${markerId})">Delete</button>
+                  </div>
+              </div>
+          `;
+          layer.unbindPopup().bindPopup(content, {
+              maxWidth: 280
+          });
+
+          layer.on('mouseover', function() {
+              layer.bindTooltip(`Base Station #${p.bsNumber}`, {
+                  permanent: false,
+                  direction: 'top',
+                  className: 'basestation-tooltip'
+              }).openTooltip();
+          });
+
+          layer.on('mouseout', function() {
+              layer.closeTooltip();
+          });
+
+          p.antennas.forEach((ant, idx) => {
+              // Tooltip is already bound inside drawAntennaDirection; no extra handlers needed.
+          });
+        }
+      });
+    }
+
+    function initBaseStation(marker) {
+      baseStationCounter++;
+      marker.feature = {
+        type: "Feature",
+        properties: {
+          type: "basestation",
+          bsNumber: baseStationCounter,
+          antennas: [],
+          height: 30
+        }
+      };
+
+      marker.setIcon(createBSIcon(baseStationCounter));
+      marker.setZIndexOffset(1000);
+
+      marker.on('mouseover', function() {
+        marker.bindTooltip(`Base Station #${marker.feature.properties.bsNumber}`, {
+          permanent: false,
+          direction: 'top',
+          className: 'basestation-tooltip'
+        }).openTooltip();
+      });
+
+      marker.on('mouseout', function() {
+        marker.closeTooltip();
+      });
+
+      showBaseStationPopup(marker);
+      updateFrequencyLegend();
+    }
+
+    const CBRS_CHANNELS_SET = new Set([3550,3560,3570,3580,3590,3600,3610,3620,3630,3640,3650,3660,3670,3680,3690]);
+
+    function updateAntennaInBS(markerId, antIdx) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+      const p = marker.feature.properties;
+      const ant = p.antennas[antIdx];
+      if (!ant) return;
+
+      const newAz   = parseFloat(document.getElementById(`bs-az-${markerId}-${antIdx}`).value)  || 0;
+      const newFreq = parseInt(document.getElementById(`bs-freq-${markerId}-${antIdx}`).value)   || 3560;
+      const newPtx  = parseFloat(document.getElementById(`bs-ptx-${markerId}-${antIdx}`).value)  || 47;
+      const newGtx  = parseFloat(document.getElementById(`bs-gtx-${markerId}-${antIdx}`).value)  || 19.5;
+
+      if (newAz !== ant.azimuth) {
+        if (ant.directionLine) {
+          if (ant.directionLine instanceof L.LayerGroup) {
+            ant.directionLine.eachLayer(l => map.removeLayer(l));
+            map.removeLayer(ant.directionLine);
+          } else {
+            map.removeLayer(ant.directionLine);
+          }
+        }
+        const latlng = marker.getLatLng();
+        ant.directionLine = drawAntennaDirection(
+          latlng.lat, latlng.lng, newAz, '#0000FF', p.bsNumber, antIdx + 1
+        );
+      }
+
+      ant.azimuth   = newAz;
+      ant.frequency = newFreq;
+      ant.Ptx       = newPtx;
+      ant.Gtx       = newGtx;
+
+      updateFrequencyLegend();
+      showBaseStationPopup(marker);
+      showToast('Antenna updated.', 'success');
+    }
+
+    function showBaseStationPopup(marker) {
+      const p = marker.feature.properties;
+      const markerId = marker._leaflet_id;
+
+      let antennasHtml = '';
+      p.antennas.forEach((ant, idx) => {
+        antennasHtml += `
+          <div class="antenna-item">
+            <h4>Antenna #${idx + 1}</h4>
+            <div class="param-row">
+              <span class="param-label">Azimuth (°):</span>
+              <input id="bs-az-${markerId}-${idx}" class="param-input" type="number"
+                     step="1" min="0" max="360" value="${ant.azimuth}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">Freq (MHz):</span>
+              <input id="bs-freq-${markerId}-${idx}" class="param-input" type="number"
+                     step="1" min="1" value="${ant.frequency}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">TX Power (dBm):</span>
+              <input id="bs-ptx-${markerId}-${idx}" class="param-input" type="number"
+                     step="0.1" value="${ant.Ptx}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">TX Gain (dBi):</span>
+              <input id="bs-gtx-${markerId}-${idx}" class="param-input" type="number"
+                     step="0.1" value="${ant.Gtx}" />
+            </div>
+            <div style="display:flex;gap:4px;margin-top:5px;">
+              <button onclick="updateAntennaInBS(${markerId},${idx})"
+                      style="background:#28a745;color:white;border:none;padding:3px 6px;
+                             border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                Save
+              </button>
+              <button onclick="deleteAntennaFromBS(${markerId},${idx})"
+                      style="background:#dc3545;color:white;border:none;padding:3px 6px;
+                             border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                Delete
+              </button>
+            </div>
+          </div>
+        `;
+      });
+
+      const content = `
+        <div class="basestation-popup">
+          <div class="title">Base Station #${p.bsNumber}</div>
+          <div class="param-row">
+            <span class="param-label">Height:</span>
+            <input id="bs-height-${markerId}" class="param-input" type="number" 
+                   value="${p.height}" step="0.1" /> m
+          </div>
+          <div class="antenna-list">
+            ${antennasHtml}
+          </div>
+          <button class="add-antenna-btn" onclick="addAntennaToBS(${markerId})">
+            Add New Antenna
+          </button>
+          <div class="buttons">
+            <button style="background:#28a745;color:white;" onclick="updateBaseStation(${markerId})">Save</button>
+            <button style="background:#ffc107;color:black;" onclick="moveBaseStation(${markerId})">Move</button>
+            <button style="background:#dc3545;color:white;" onclick="deleteBaseStation(${markerId})">Delete</button>
+          </div>
+        </div>
+      `;
+
+      marker.unbindPopup().bindPopup(content, {
+        maxWidth: 280
+      }).openPopup();
+    }
+
+    function addAntennaToBS(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      antennaPlacementInProgress = true;
+      setAntennaDirectionInteractivity(false);
+      map.closePopup();
+      marker.closePopup();
+      const startLL = marker.getLatLng();
+      let tempLine;
+      let isSettingAz = true;
+      let currentMouse = null;
+
+      function onMouseMove(e) {
+        if (!isSettingAz) return;
+        currentMouse = e.latlng;
+        if (tempLine) map.removeLayer(tempLine);
+        tempLine = L.polyline([startLL, e.latlng], {
+          color: '#0000FF',
+          weight: 2
+        }).addTo(map);
+      }
+
+      async function onFinalClick() {
+        if (!isSettingAz) return;
+        isSettingAz = false;
+        map.off('mousemove', onMouseMove);
+        if (tempLine) map.removeLayer(tempLine);
+
+        const endLL = currentMouse || startLL;
+        const az = parseFloat(calculateAzimuth(startLL.lat, startLL.lng, endLL.lat, endLL.lng).toFixed(2));
+
+        const params = await showAntennaModal(az);
+        if (!params) {
+          antennaPlacementInProgress = false;
+          setAntennaDirectionInteractivity(true);
+          // user cancelled — restore draw control without adding antenna
+          map.addControl(drawControl);
+          return;
+        }
+
+        const bsNumber = marker.feature.properties.bsNumber;
+        const antNumber = marker.feature.properties.antennas.length + 1;
+
+        const newAntenna = {
+          azimuth: az,
+          frequency: params.freq,
+          Ptx: params.ptx,
+          Gtx: params.gtx,
+          directionLine: drawAntennaDirection(
+            startLL.lat,
+            startLL.lng,
+            az,
+            '#0000FF',
+            bsNumber,
+            antNumber
+          )
+        };
+
+        marker.feature.properties.antennas.push(newAntenna);
+        showBaseStationPopup(marker);
+        antennaPlacementInProgress = false;
+        setAntennaDirectionInteractivity(true);
+        map.addControl(drawControl);
+        updateFrequencyLegend();
+      }
+
+      map.removeControl(drawControl);
+      map.on('mousemove', onMouseMove);
+      map.once('click', onFinalClick);
+    }
+
+    function deleteAntennaFromBS(markerId, antennaIdx) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      const antennas = marker.feature.properties.antennas;
+      const antenna = antennas[antennaIdx];
+      
+      // Rimuovi direzioni e layer gruppo
+      if (antenna.directionLine) {
+          if (antenna.directionLine instanceof L.LayerGroup) {
+              antenna.directionLine.eachLayer(layer => {
+                  map.removeLayer(layer);
+              });
+              map.removeLayer(antenna.directionLine);
+          } else {
+              map.removeLayer(antenna.directionLine);
+          }
+          antenna.directionLine = null;
+      }
+
+      // Rimuovi l'antenna dall'array
+      antennas.splice(antennaIdx, 1);
+      
+      // Ridisegna le frecce delle antenne rimanenti con etichette aggiornate
+      const p = marker.feature.properties;
+      antennas.forEach((ant, idx) => {
+          if (ant.directionLine) {
+              ant.directionLine.eachLayer(layer => {
+                  map.removeLayer(layer);
+              });
+              ant.directionLine = drawAntennaDirection(
+                  marker.getLatLng().lat,
+                  marker.getLatLng().lng,
+                  ant.azimuth,
+                  '#0000FF',
+                  p.bsNumber,
+                  idx + 1
+              );
+          }
+      });
+      
+      // Aggiorna la popup e la legenda
+      showBaseStationPopup(marker);
+      updateFrequencyLegend();
+  }
+
+  function deleteBaseStation(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      // Prima rimuovi tutte le frecce direzionali delle antenne
+      const antennas = marker.feature.properties.antennas;
+      if (antennas && Array.isArray(antennas)) {
+          antennas.forEach(ant => {
+              if (ant.directionLine) {
+                  if (ant.directionLine instanceof L.LayerGroup) {
+                      ant.directionLine.eachLayer(layer => {
+                          map.removeLayer(layer);
+                      });
+                      map.removeLayer(ant.directionLine);
+                  } else {
+                      map.removeLayer(ant.directionLine);
+                  }
+              }
+          });
+      }
+
+      // Rimuovi il marker
+      drawnItems.removeLayer(marker);
+      map.removeLayer(marker);
+      
+      // Aggiorna la numerazione delle base station
+      refreshBaseStationNumbers();
+      
+      // Ridisegna tutte le frecce delle antenne con etichette aggiornate
+      map.eachLayer(layer => {
+          if (layer instanceof L.Marker && 
+              layer.feature && 
+              layer.feature.properties.type === "basestation") {
+              const p = layer.feature.properties;
+              p.antennas.forEach((ant, idx) => {
+                  if (ant.directionLine) {
+                      ant.directionLine.eachLayer(l => {
+                          map.removeLayer(l);
+                      });
+                      ant.directionLine = drawAntennaDirection(
+                          layer.getLatLng().lat,
+                          layer.getLatLng().lng,
+                          ant.azimuth,
+                          '#0000FF',
+                          p.bsNumber,
+                          idx + 1
+                      );
+                  }
+              });
+              showBaseStationPopup(layer);
+          }
+      });
+      
+      updateFrequencyLegend();
+  }
+
+    function moveBaseStation(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      map.closePopup();
+      marker.closePopup();
+      marker.dragging.enable();
+
+      const antennas = marker.feature.properties.antennas;
+      const originalPosition = marker.getLatLng();
+
+      function onDragStart() {
+        // Remove direction lines; they will be redrawn on drag
+        antennas.forEach(ant => {
+          if (ant.directionLine) {
+            ant.directionLine.eachLayer(layer => {
+              map.removeLayer(layer);
+            });
+          }
+        });
+      }
+
+      function onDrag(e) {
+        const newPos = e.target.getLatLng();
+        // Aggiorna le frecce in “fantasma”
+        antennas.forEach(ant => {
+          if (ant.directionLine) {
+            ant.directionLine.eachLayer(layer => {
+              map.removeLayer(layer);
+            });
+            ant.directionLine = drawAntennaDirection(
+              newPos.lat,
+              newPos.lng,
+              ant.azimuth,
+              '#AAAAAA',
+              true
+            );
+          }
+        });
+      }
+
+      function onDragEnd(e) {
+        const newPos = e.target.getLatLng();
+
+        marker.feature.geometry = {
+          type: "Point",
+          coordinates: [newPos.lng, newPos.lat]
+        };
+
+        // Ripristina aspetto frecce
+        const p = marker.feature.properties;
+        antennas.forEach((ant, idx) => {
+          if (ant.directionLine) {
+            ant.directionLine.eachLayer(layer => {
+              map.removeLayer(layer);
+            });
+            ant.directionLine = drawAntennaDirection(
+              newPos.lat,
+              newPos.lng,
+              ant.azimuth,
+              '#0000FF',
+              p.bsNumber,
+              idx + 1
+            );
+          }
+        });
+
+        marker.dragging.disable();
+        showBaseStationPopup(marker);
+
+        marker.off('dragstart', onDragStart);
+        marker.off('drag', onDrag);
+        marker.off('dragend', onDragEnd);
+      }
+
+      marker.on('dragstart', onDragStart);
+      marker.on('drag', onDrag);
+      marker.on('dragend', onDragEnd);
+    }
+
+    function updateBaseStation(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      const height = parseFloat(document.getElementById(`bs-height-${markerId}`).value) || 30;
+      marker.feature.properties.height = height;
+      
+      showBaseStationPopup(marker);
+      
+      showToast("Base station updated.", "success");
+    }
+
+    function findMarkerById(markerId) {
+      let foundMarker = null;
+      map.eachLayer(l => {
+        if (l instanceof L.Marker && l._leaflet_id === markerId) {
+          foundMarker = l;
+        }
+      });
+      return foundMarker;
+    }
+
+    //-------------------------------------------------
+    // 4) Polygon and Circle Management
+    //-------------------------------------------------
+    const centroidMarkersMap = {};
+    const circleCentersMap = {};
+
+    function removeAreaCentroid(layerId) {
+      const old = centroidMarkersMap[layerId];
+      if (old) {
+        map.removeLayer(old);
+        delete centroidMarkersMap[layerId];
+      }
+    }
+
+    function removeCircleCenter(layerId) {
+      const old = circleCentersMap[layerId];
+      if (old) {
+        map.removeLayer(old);
+        delete circleCentersMap[layerId];
+      }
+    }
+
+    function showAreaCentroid(layer) {
+      removeAreaCentroid(layer._leaflet_id);
+
+      const center = layer.getBounds().getCenter();
+
+      const centerMarker = L.marker(center, {
+        icon: L.divIcon({
+          className: 'centroid-marker',
+          html: '⌖',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        })
+      }).addTo(map);
+      centerMarker.bindTooltip(
+        `Area Center<br>Lat: ${center.lat.toFixed(6)}<br>Lon: ${center.lng.toFixed(6)}`,
+        { permanent: false, direction: 'top' }
+      );
+      centroidMarkersMap[layer._leaflet_id] = centerMarker;
+    }
+
+    function showCircleCenter(layer) {
+      removeCircleCenter(layer._leaflet_id);
+      const c = layer.getLatLng();
+      const marker = L.marker(c, {
+        icon: L.divIcon({
+          className: 'centroid-marker',
+          html: '●',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        })
+      }).addTo(map);
+      marker.bindTooltip(
+        `Circle Center<br>Lat: ${c.lat.toFixed(6)}<br>Lon: ${c.lng.toFixed(6)}`,
+        { permanent: false, direction: 'top' }
+      );
+      circleCentersMap[layer._leaflet_id] = marker;
+    }
+
+    function calculateAreaPolygon(layer) {
+      const latlngs = layer.getLatLngs()[0];
+      const area = L.GeometryUtil.geodesicArea(latlngs);
+      return (area / 1000000).toFixed(2);
+    }
+
+    function calculatePerimeterPolygon(layer) {
+      const latlngs = layer.getLatLngs()[0];
+      let perimeter = 0;
+      for (let i = 0; i < latlngs.length - 1; i++) {
+        perimeter += latlngs[i].distanceTo(latlngs[i + 1]);
+      }
+      return (perimeter / 1000).toFixed(2);
+    }
+
+    function calculatePerimeterCircle(layer) {
+      const radius = layer.getRadius(); // in meters
+      const circumference = 2 * Math.PI * radius;
+      return (circumference / 1000).toFixed(2);
+    }
+
+    function showAreaDetails(layer) {
+      const aKm2 = calculateAreaPolygon(layer);
+      const perimeterKm = calculatePerimeterPolygon(layer);
+      const c = layer.getBounds().getCenter();
+      const content = `
+        <div class="area-popup">
+          <div class="title">Area Details</div>
+          <div class="param-row">
+            <span class="param-label">Area (km²):</span>
+            <span class="param-value">${aKm2}</span>
+          </div>
+          <div class="param-row">
+            <span class="param-label">Perimeter (km):</span>
+            <span class="param-value">${perimeterKm}</span>
+          </div>
+          <div class="coordinates">
+            <div class="param-row">
+              <span class="param-label">Center Lat:</span>
+              <span class="param-value">${c.lat.toFixed(6)}</span>
+            </div>
+            <div class="param-row">
+              <span class="param-label">Center Lng:</span>
+              <span class="param-value">${c.lng.toFixed(6)}</span>
+            </div>
+          </div>
+          <div class="buttons">
+            <button onclick="moveArea(${layer._leaflet_id})">Move Area</button>
+            <button onclick="deleteArea(${layer._leaflet_id})" style="background-color: #dc3545;">
+              Delete Area
+            </button>
+          </div>
+        </div>
+      `;
+      layer.bindPopup(content, {
+        autoPan: true,
+        keepInView: true,
+        className: 'custom-popup',
+        minWidth: 220,
+        maxWidth: 300
+      });
+
+      layer.on('click', function() {
+        layer.openPopup();
+      });
+    }
+
+    function showCircleDetails(layer) {
+      const c = layer.getLatLng();
+      const radius = layer.getRadius();
+      const areaKm2 = (Math.PI * Math.pow(radius, 2) / 1000000).toFixed(2);
+      const circumferenceKm = calculatePerimeterCircle(layer);
+      const content = `
+        <div class="area-popup">
+          <div class="title">Circle Details</div>
+          <div class="param-row">
+            <span class="param-label">Radius (m):</span>
+            <span class="param-value">${radius.toFixed(2)}</span>
+          </div>
+          <div class="param-row">
+            <span class="param-label">Area (km²):</span>
+            <span class="param-value">${areaKm2}</span>
+          </div>
+          <div class="param-row">
+            <span class="param-label">Circumference (km):</span>
+            <span class="param-value">${circumferenceKm}</span>
+          </div>
+          <div class="coordinates">
+            <div class="param-row">
+              <span class="param-label">Center Lat:</span>
+              <span class="param-value">${c.lat.toFixed(6)}</span>
+            </div>
+            <div class="param-row">
+              <span class="param-label">Center Lng:</span>
+              <span class="param-value">${c.lng.toFixed(6)}</span>
+            </div>
+          </div>
+          <div class="buttons">
+            <button onclick="moveCircle(${layer._leaflet_id})">Move Circle</button>
+            <button onclick="deleteCircle(${layer._leaflet_id})" style="background-color: #dc3545;">
+              Delete Circle
+            </button>
+          </div>
+        </div>
+      `;
+      layer.bindPopup(content, {
+        autoPan: true,
+        keepInView: true,
+        className: 'custom-popup',
+        minWidth: 220,
+        maxWidth: 300
+      });
+
+      layer.on('click', function() {
+        layer.openPopup();
+      });
+    }
+
+    function moveArea(layerId) {
+      const layer = drawnItems.getLayer(layerId);
+      if (!layer) return;
+
+      map.closePopup();
+      layer.closePopup();
+      layer.dragging.enable();
+
+      removeAreaCentroid(layerId);
+
+      const center = layer.getBounds().getCenter();
+      const ghostCentroid = L.marker(center, {
+        icon: L.divIcon({
+          className: 'centroid-marker ghost-marker',
+          html: '⌖',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        })
+      }).addTo(map);
+
+      function onDrag() {
+        const newCenter = layer.getBounds().getCenter();
+        ghostCentroid.setLatLng(newCenter);
+
+        if (layer.feature && layer.feature.geometry) {
+          if (layer instanceof L.Polygon) {
+            layer.feature.geometry.coordinates = [layer.getLatLngs()[0].map(latlng => [latlng.lng, latlng.lat])];
+          }
+        }
+      }
+
+      function onDragEnd() {
+        layer.dragging.disable();
+        ghostCentroid.remove();
+
+        showAreaCentroid(layer);
+        showAreaDetails(layer);
+
+        layer.openPopup();
+
+        layer.off('drag', onDrag);
+        layer.off('dragend', onDragEnd);
+      }
+
+      layer.on('drag', onDrag);
+      layer.once('dragend', onDragEnd);
+    }
+
+    function moveCircle(layerId) {
+      const layer = drawnItems.getLayer(layerId);
+      if (!layer) return;
+
+      map.closePopup();
+      layer.closePopup();
+      layer.dragging.enable();
+
+      removeCircleCenter(layerId);
+
+      const originalCenter = layer.getLatLng();
+      const ghostCenter = L.marker(originalCenter, {
+        icon: L.divIcon({
+          className: 'centroid-marker ghost-marker',
+          html: '●',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        })
+      }).addTo(map);
+
+      function onDrag() {
+        ghostCenter.setLatLng(layer.getLatLng());
+      }
+
+      function onDragEnd() {
+        layer.dragging.disable();
+        ghostCenter.remove();
+
+        showCircleCenter(layer);
+        showCircleDetails(layer);
+
+        layer.openPopup();
+
+        layer.off('drag', onDrag);
+        layer.off('dragend', onDragEnd);
+      }
+
+      layer.on('drag', onDrag);
+      layer.once('dragend', onDragEnd);
+    }
+
+    function deleteArea(layerId) {
+      const layer = drawnItems.getLayer(layerId);
+      if (!layer) return;
+      map.closePopup();
+      removeAreaCentroid(layerId);
+      drawnItems.removeLayer(layer);
+      map.removeLayer(layer);
+    }
+
+    function deleteCircle(layerId) {
+      const layer = drawnItems.getLayer(layerId);
+      if (!layer) return;
+      map.closePopup();
+      removeCircleCenter(layerId);
+      drawnItems.removeLayer(layer);
+      map.removeLayer(layer);
+    }
+
+    function initializeMarker(layer) {
+      initBaseStation(layer);
+    }
+
+    function initializePolygon(layer) {
+      showAreaCentroid(layer);
+      showAreaDetails(layer);
+    }
+
+    function initializeCircle(layer) {
+      showCircleCenter(layer);
+      showCircleDetails(layer);
+    }
+
+    //-------------------------------------------------
+    // 6) FREQUENCY LEGEND (AGGIUNTO)
+    //-------------------------------------------------
+    function updateFrequencyLegend() {
+      const freqMap = {}; // freq → [label, ...]
+
+      drawnItems.eachLayer(layer => {
+        if (!(layer instanceof L.Marker) || !layer.feature) return;
+        if (layer.feature.properties.type !== "basestation") return;
+        const bsNum = layer.feature.properties.bsNumber;
+        (layer.feature.properties.antennas || []).forEach((ant, idx) => {
+          const f = ant.frequency;
+          if (!freqMap[f]) freqMap[f] = [];
+          freqMap[f].push(`BS #${bsNum} — Ant. ${idx + 1}`);
+        });
+      });
+
+      const grid = document.getElementById('freq-tiles-grid');
+      grid.innerHTML = '';
+      document.getElementById('freq-info-popup').classList.add('freq-info-hidden');
+
+      const freqs = Object.keys(freqMap).map(Number).sort((a, b) => a - b);
+
+      if (freqs.length === 0) {
+        grid.innerHTML = '<span style="font-size:10px;color:#999;">No antennas yet</span>';
+        return;
+      }
+
+      freqs.forEach(freq => {
+        const labels = freqMap[freq];
+        const isClash = labels.length > 1;
+        const isOob   = !CBRS_CHANNELS_SET.has(freq);
+        const tile = document.createElement('div');
+        tile.className = `freq-tile ${isClash ? 'freq-tile-clash' : 'freq-tile-free'}${isOob ? ' freq-tile-oob' : ''}`;
+        tile.title = `${freq} MHz${isOob ? ' (non-CBRS)' : ''} — ${labels.length} antenna(s)${isClash ? ' ⚠ co-channel' : ''}`;
+        tile.innerHTML = `<span class="freq-tile-mhz">${freq}</span><span class="freq-tile-count">×${labels.length}</span>`;
+        tile.addEventListener('click', () => showFreqInfo(freq, labels, isOob));
+        grid.appendChild(tile);
+      });
+    }
+
+    function showFreqInfo(freq, labels, isOob) {
+      document.getElementById('freq-info-title').textContent =
+        `${freq} MHz${isOob ? ' ⚠ non-CBRS' : ''}`;
+      const list = document.getElementById('freq-info-list');
+      list.innerHTML = labels.map(l => `<li>${l}</li>`).join('');
+      document.getElementById('freq-info-popup').classList.remove('freq-info-hidden');
+    }
+
+    //-------------------------------------------------
+    // 7) Save GeoJSON (con controlli extra)
+    //-------------------------------------------------
+    document.getElementById('startup-close-btn').addEventListener('click', function() {
+      document.getElementById('startup-overlay').classList.add('hidden');
+    });
+
+    function saveGeoJSON() {
+      if (!drawnItems || !map) {
+        showToast("Open the map first.", "warning");
+        return;
+      }
+
+      // Verifica se esiste almeno un'area di interesse
+      let hasAreaOfInterest = false;
+      // Verifica se c'è almeno una base station con almeno 1 antenna
+      let hasBSwithAntenna = false;
+
+      drawnItems.eachLayer(layer => {
+        if (layer instanceof L.Polygon || layer instanceof L.Rectangle || layer instanceof L.Circle) {
+          hasAreaOfInterest = true;
+        }
+        if (layer instanceof L.Marker && layer.feature && layer.feature.properties.type === "basestation") {
+          const ants = layer.feature.properties.antennas || [];
+          if (ants.length > 0) {
+            hasBSwithAntenna = true;
+          }
+        }
+      });
+
+      if (!hasAreaOfInterest) {
+        showToast("Please draw at least one area of interest before saving.", "warning");
+        return;
+      }
+
+      // Nuovo controllo richiesto:
+      if (!hasBSwithAntenna) {
+        showToast("Please place at least one Base Station with at least one antenna before saving.", "warning");
+        return;
+      }
+
+      // Costruiamo il GeoJSON
+      const data = drawnItems.toGeoJSON();
+      const processedFeatures = [];
+
+      data.features.forEach(feature => {
+        if (feature.properties && feature.properties.directionLine) {
+          delete feature.properties.directionLine;
+        }
+
+        if (feature.geometry.type === "Point") {
+          if (!feature.properties) {
+            feature.properties = {};
+          }
+
+          if (feature.properties.type === "basestation") {
+            feature.properties.antennas.forEach(ant => {
+              processedFeatures.push({
+                type: "Feature",
+                properties: {
+                  type: "real_antenna",  
+                  azimuth: ant.azimuth,
+                  frequency: ant.frequency,
+                  Ptx: ant.Ptx,
+                  Gtx: ant.Gtx,
+                  height: feature.properties.height
+                },
+                geometry: {
+                  type: "Point",
+                  coordinates: [feature.geometry.coordinates[0], feature.geometry.coordinates[1]]
+                }
+              });
+            });
+          } else {
+            feature.properties.type = "real_antenna";
+            processedFeatures.push(feature);
+          }
+        } else {
+          processedFeatures.push(feature);
+        }
+      });
+
+      const finalData = {
+        type: "FeatureCollection",
+        features: processedFeatures
+      };
+
+      fetch("/save_geojson", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finalData),
+      })
+      .then(r => {
+        if (!r.ok) throw new Error('Network response was not ok');
+        return r.json();
+      })
+      .then(resp => {
+        if (resp.status === "ok") {
+          showToast("GeoJSON saved — return to the terminal and press ENTER.", "success", 7000);
+        } else {
+          throw new Error(resp.message || 'Unknown error');
+        }
+      })
+      .catch(err => {
+        console.error("Error:", err);
+        showToast("Error saving file: " + err.message, "error");
+      });
+    }
+
+  </script>
+</body>
+</html>

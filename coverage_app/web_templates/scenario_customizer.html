@@ -1,0 +1,2488 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Custom Scenario Creator</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet.draw CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #map-container {
+      display: flex;
+      flex-direction: row;
+      position: relative;
+      flex: 1;
+      min-height: 0;
+    }
+    #map {
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ─── CBRS Channel Panel ─── */
+    #cbrs-panel {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 950;
+      background: rgba(255,255,255,0.96);
+      border-radius: 12px;
+      box-shadow: 0 3px 14px rgba(0,0,0,0.18);
+      padding: 8px 14px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+    .cbrs-panel-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .cbrs-channels-row {
+      display: flex;
+      gap: 3px;
+    }
+    .cbrs-ch {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 44px;
+      border-radius: 6px;
+      user-select: none;
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+    .cbrs-ch.available {
+      background: #28a745;
+      color: white;
+      cursor: default;
+    }
+    .cbrs-ch.occupied {
+      background: #dc3545;
+      color: white;
+      cursor: pointer;
+    }
+    .cbrs-ch.occupied:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 4px 12px rgba(220,53,69,0.45);
+    }
+    .cbrs-ch .ch-num {
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .cbrs-ch .ch-freq {
+      font-size: 8px;
+      opacity: 0.9;
+      line-height: 1;
+      margin-top: 2px;
+    }
+    .cbrs-ch.extra-ch {
+      border: 2px dashed #ff8c00;
+      background: #fff3cd;
+      color: #7a4800;
+      cursor: pointer;
+      width: auto;
+      min-width: 38px;
+      padding: 0 4px;
+    }
+    .cbrs-ch.extra-ch:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 4px 12px rgba(255,140,0,0.4);
+    }
+    .cbrs-ch-separator {
+      align-self: center;
+      font-size: 9px;
+      color: #999;
+      padding: 0 4px;
+      white-space: nowrap;
+    }
+    /* ─── Channel info popup ─── */
+    #ch-info-popup {
+      display: none;
+      position: absolute;
+      z-index: 1000;
+      top: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+      padding: 14px 16px 12px;
+      min-width: 180px;
+      max-width: 300px;
+      border-top: 4px solid #dc3545;
+    }
+    #ch-info-popup.open { display: block; }
+    #ch-info-popup h4 { margin: 0 0 8px; font-size: 13px; color: #dc3545; }
+    #ch-info-popup ul {
+      margin: 0; padding-left: 16px;
+      font-size: 12px; color: #333; line-height: 1.7;
+      max-height: 160px; overflow-y: auto;
+    }
+    .ch-popup-close {
+      position: absolute; top: 8px; right: 10px;
+      background: none; border: none; font-size: 14px; cursor: pointer;
+      color: #aaa; padding: 0; line-height: 1;
+    }
+    .ch-popup-close:hover { color: #495057 !important; background: none !important; }
+    /* ─── Antenna aura pulse ─── */
+    .aura-icon { background: none !important; border: none !important; }
+    .aura-ring {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      border: 3px solid #dc3545;
+      animation: aura-pulse 1s ease-out 3;
+      pointer-events: none;
+    }
+    @keyframes aura-pulse {
+      0%   { transform: scale(0.6); opacity: 1; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    /* ─── Random Generator Toolbar control ─── */
+    .randgen-control-btn { font-size: 0 !important; }
+    .randgen-control-btn::after {
+      content: "\f522";
+      font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px;
+      color: #6610f2;
+    }
+    /* ─── Random Generator Modal ─── */
+    #randgen-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15,23,42,0.5);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(3px);
+    }
+    #randgen-overlay.active { display: flex; }
+    .randgen-box {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.28);
+      min-width: 300px;
+      max-width: 370px;
+      width: 90%;
+      overflow: hidden;
+      animation: randgen-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes randgen-pop {
+      from { transform: scale(0.88); opacity: 0; }
+      to   { transform: scale(1);    opacity: 1; }
+    }
+    .randgen-header {
+      background: linear-gradient(135deg, #4b0082 0%, #6610f2 100%);
+      color: white;
+      padding: 16px 20px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .randgen-header i { font-size: 20px; }
+    .randgen-header h3 { margin: 0; font-size: 15px; font-weight: 700; }
+    .randgen-body { padding: 16px 20px 8px; }
+    .rg-field { margin-bottom: 13px; }
+    .rg-field label {
+      display: block; font-size: 11px; font-weight: 700;
+      color: #6c757d; text-transform: uppercase;
+      letter-spacing: 0.5px; margin-bottom: 5px;
+    }
+    .rg-row { display: flex; gap: 8px; }
+    .rg-input-wrap {
+      display: flex; align-items: stretch;
+      border: 1.5px solid #dee2e6; border-radius: 8px; overflow: hidden;
+      flex: 1;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .rg-input-wrap:focus-within {
+      border-color: #6610f2;
+      box-shadow: 0 0 0 3px rgba(102,16,242,0.12);
+    }
+    .rg-input-wrap input {
+      border: none; outline: none; padding: 8px 10px;
+      font-size: 14px; flex: 1; min-width: 0; background: transparent;
+    }
+    .rg-input-wrap .rg-unit {
+      padding: 8px 10px; font-size: 11px; font-weight: 600;
+      color: #6c757d; background: #f8f9fa;
+      border-left: 1.5px solid #dee2e6;
+      display: flex; align-items: center; user-select: none;
+    }
+    .randgen-footer {
+      padding: 12px 20px;
+      background: #f8f9fa; border-top: 1px solid #e9ecef;
+      display: flex; gap: 8px; justify-content: flex-end;
+    }
+    .rg-btn {
+      padding: 8px 20px; font-size: 13px; font-weight: 600;
+      border: none; border-radius: 7px; cursor: pointer;
+      transition: background 0.15s;
+      margin-bottom: 0;
+    }
+    .rg-btn-confirm { background: #6610f2; color: white; }
+    .rg-btn-confirm:hover { background: #4b0082; }
+    .rg-btn-dismiss { background: #e9ecef; color: #495057; }
+    .rg-btn-dismiss:hover { background: #dee2e6; }
+
+    .antenna-popup {
+      padding: 8px;
+      max-width: 300px;
+    }
+    .antenna-popup .title {
+      font-weight: bold;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 4px;
+    }
+    .antenna-popup .param-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 4px 0;
+      align-items: center;
+    }
+    .antenna-popup .param-label {
+      margin-right: 10px;
+      font-size: 12px;
+    }
+    .antenna-popup .param-input {
+      width: 60px;
+      font-size: 12px;
+      padding: 3px;
+      margin-left: 5px;
+    }
+    .antenna-popup .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 8px;
+      padding-top: 5px;
+      border-top: 1px solid #ccc;
+      justify-content: space-between;
+    }
+
+    .area-of-interest {
+      color: #ff5722; 
+      border-width: 2px;
+      background-color: #ff5722;
+      opacity: 0.1;
+      border-style: dashed;
+    }
+
+    /* Base station UI styles */
+    .basestation-popup {
+        padding: 12px;
+        max-width: 350px;
+    }
+    .basestation-popup .title {
+        font-weight: bold;
+        margin-bottom: 12px;
+        border-bottom: 2px solid #dc3545;
+        padding-bottom: 6px;
+        color: #dc3545;
+    }
+    .basestation-popup .antenna-list {
+        max-height: 300px;
+        overflow-y: auto;
+        margin: 10px 0;
+    }
+    .basestation-popup .antenna-item {
+        background: #f8f9fa;
+        border: 1px solid #ddd;
+        margin: 5px 0;
+        padding: 8px;
+        border-radius: 4px;
+    }
+    .basestation-popup .antenna-item h4 {
+        margin: 0 0 8px 0;
+        color: #dc3545;
+        font-size: 14px;
+    }
+    .basestation-popup .add-antenna-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 8px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+        width: 100%;
+        margin: 10px 0;
+    }
+    .basestation-popup .add-antenna-btn:hover {
+        background: #218838;
+    }
+
+    /* Additional styles for antenna popups */
+    .antenna-popup {
+        padding: 10px;
+        max-width: 280px;
+    }
+    .antenna-popup .title {
+        font-weight: bold;
+        margin-bottom: 10px;
+        padding: 5px 0;
+        text-align: center;
+        border-radius: 4px;
+    }
+    .antenna-popup .title.blue {
+        background-color: #007bff;
+        color: white;
+    }
+    .antenna-popup .title.red {
+        background-color: #dc3545;
+        color: white;
+    }
+    .antenna-popup .param-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 8px 0;
+        align-items: center;
+        background-color: #f8f9fa;
+        padding: 5px 8px;
+        border-radius: 4px;
+    }
+    .antenna-popup .param-label {
+        font-size: 11px;
+        font-weight: bold;
+        color: #495057;
+    }
+    .antenna-popup .param-input {
+        width: 70px;
+        font-size: 11px;
+        padding: 2px 5px;
+        border: 1px solid #ced4da;
+        border-radius: 3px;
+        text-align: right;
+    }
+    .antenna-popup .param-input:read-only {
+        background-color: #e9ecef;
+        border-color: #dee2e6;
+    }
+    .antenna-popup .buttons {
+        display: flex;
+        gap: 5px;
+        margin-top: 12px;
+        padding-top: 8px;
+        border-top: 1px solid #dee2e6;
+        justify-content: flex-end;
+    }
+    .antenna-popup .buttons button {
+        padding: 4px 8px;
+        font-size: 11px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        color: white;
+        transition: opacity 0.2s;
+    }
+    .antenna-popup .buttons button:hover {
+        opacity: 0.9;
+    }
+    .antenna-popup .save-btn {
+        background-color: #28a745;
+    }
+    .antenna-popup .delete-btn {
+        background-color: #dc3545;
+    }
+    .antenna-popup .move-btn {
+        background-color: #ffc107;
+        color: #212529;
+    }
+
+    /* Updated styles for base station popup */
+    .basestation-popup {
+        padding: 10px;
+        max-width: 280px;
+        font-size: 11px; 
+    }
+    .basestation-popup .title {
+        font-weight: bold;
+        margin-bottom: 8px;
+        padding: 5px 0;
+        text-align: center;
+        border-radius: 4px;
+        background-color: #dc3545;
+        color: white;
+        font-size: 12px;
+    }
+    .basestation-popup .param-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 6px 0;
+        align-items: center;
+        background-color: #f8f9fa;
+        padding: 4px 6px;
+        border-radius: 3px;
+    }
+    .basestation-popup .antenna-list {
+        max-height: 200px;
+        overflow-y: auto;
+        margin: 8px 0;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 4px;
+    }
+    .basestation-popup .antenna-item {
+        background: white;
+        border: 1px solid #e9ecef;
+        margin: 4px 0;
+        padding: 6px;
+        border-radius: 3px;
+    }
+    .basestation-popup .antenna-item h4 {
+        margin: 0 0 6px 0;
+        color: #dc3545;
+        font-size: 11px;
+        border-bottom: 1px solid #dee2e6;
+        padding-bottom: 4px;
+    }
+    .basestation-popup .antenna-item .param-row {
+        margin: 3px 0;
+        padding: 2px 4px;
+    }
+    .basestation-popup .param-label {
+        font-weight: bold;
+        color: #495057;
+    }
+    .basestation-popup .param-input {
+        width: 60px;
+        padding: 2px 4px;
+        border: 1px solid #ced4da;
+        border-radius: 3px;
+        text-align: right;
+    }
+    .basestation-popup .add-antenna-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 3px;
+        cursor: pointer;
+        width: 100%;
+        margin: 8px 0;
+        font-size: 11px;
+        transition: background-color 0.2s;
+    }
+    .basestation-popup .add-antenna-btn:hover {
+        background: #218838;
+    }
+    .basestation-popup .buttons {
+        display: flex;
+        gap: 4px;
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid #dee2e6;
+        justify-content: flex-end;
+    }
+    .basestation-popup .buttons button {
+        padding: 4px 8px;
+        font-size: 11px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: opacity 0.2s;
+    }
+    .basestation-popup .buttons button:hover {
+        opacity: 0.9;
+    }
+
+    /* Real Antenna Popup Styles */
+    .real-antennas-container {
+        background: #f8f9fa;
+        border-radius: 4px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        margin: 4px 0;  /* Ridotto da 6px */
+        max-width: 220px;  /* Aggiunto per limitare larghezza */
+    }
+
+    .real-antennas-header {
+        background: #007bff;
+        color: white;
+        padding: 4px 6px;  /* Ridotto da 6px 8px */
+        font-weight: 600;
+        border-radius: 4px 4px 0 0;
+        font-size: 10px;  /* Ridotto da 11px */
+        text-align: center;
+    }
+
+    .real-antennas-grid {
+        padding: 6px;  /* Ridotto da 8px */
+        max-height: 200px;  /* Ridotto da 250px */
+        overflow-y: auto;
+    }
+
+    .real-antenna-card {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        margin-bottom: 6px;  /* Ridotto da 8px */
+        transition: all 0.2s ease;
+    }
+
+    .antenna-card-header {
+        background: #e9ecef;
+        padding: 4px 8px;  /* Ridotto da 8px 12px */
+        font-weight: 600;
+        color: #495057;
+        border-radius: 4px 4px 0 0;
+        font-size: 10px;  /* Ridotto da 12px */
+        border-bottom: 2px solid #007bff;
+    }
+
+    .antenna-params-table {
+        margin: 4px 8px;  /* Ridotto da 8px 12px */
+        width: calc(100% - 16px);
+        border-collapse: separate;
+        border-spacing: 0 2px;  /* Ridotto da 4px */
+    }
+
+    .antenna-params-table td {
+        padding: 2px 6px;  /* Ridotto da 4px 8px */
+        font-size: 10px;  /* Ridotto da 12px */
+        line-height: 1.3;
+    }
+
+    .param-value {
+        display: inline-block;
+        background: #e9ecef;
+        padding: 1px 6px;  /* Ridotto da 2px 8px */
+        border-radius: 3px;
+        min-width: 50px;  /* Ridotto da 60px */
+        text-align: right;
+        font-size: 10px;  /* Aggiunto per ridurre dimensione testo */
+    }
+
+    .marker-tooltip {
+        background: rgba(0, 0, 0, 0.8);
+        border: none;
+        border-radius: 3px;
+        color: white;
+        font-size: 11px;
+        padding: 3px 6px;
+    }
+    .marker-tooltip::before {
+        border-top-color: rgba(0, 0, 0, 0.8);
+    }
+
+    /* --- MODERN LEAFLET CONTROLS --- */
+    .leaflet-bar {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+      border: none !important;
+      border-radius: 8px !important;
+      overflow: hidden;
+    }
+    .leaflet-bar a {
+      background-color: #fff !important;
+      border-bottom: 1px solid #f0f0f0 !important;
+      width: 36px !important;
+      height: 36px !important;
+      text-align: center !important;
+      background-image: none !important;
+      color: #495057 !important;
+      transition: background-color 0.2s, color 0.2s !important;
+      text-decoration: none !important;
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+    }
+    .leaflet-bar a:hover {
+      background-color: #f1f5ff !important;
+      color: #007bff !important;
+    }
+    .leaflet-bar a:last-child {
+      border-bottom: none !important;
+    }
+    
+    .leaflet-control-zoom-in, 
+    .leaflet-control-zoom-out {
+      font-size: 0 !important; 
+    }
+    .leaflet-control-zoom-in::after { content: "\f067"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-control-zoom-out::after { content: "\f068"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-draw-polygon::after { content: "\f534"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px; }
+    .leaflet-draw-draw-rectangle::after { content: "\f5cb"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-draw-circle::after { content: "\f1db"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-draw-marker::after { content: "\f3c5"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 16px; }
+    .leaflet-draw-edit-edit::after { content: "\f044"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px; }
+    .leaflet-draw-edit-remove::after { content: "\f2ed"; font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px; }
+
+    .leaflet-draw-actions {
+      left: 40px !important; 
+    }
+    .leaflet-draw-actions a {
+      background-color: #343a40 !important;
+      color: white !important;
+      border: none !important;
+      border-radius: 4px !important;
+      margin-left: 4px !important;
+      height: 32px !important;
+      display: flex !important;
+      align-items: center !important;
+      font-size: 12px !important;
+      padding: 0 12px !important;
+      width: auto !important;
+    }
+    .leaflet-draw-actions a:hover {
+      background-color: #212529 !important;
+      color: white !important;
+    }
+
+    /* ── Help panel (toggled by "?" control) ── */
+    #help-panel {
+      display: none;
+      position: absolute;
+      top: 10px;
+      left: 50px;
+      z-index: 1100;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+      padding: 18px 20px 14px;
+      min-width: 280px;
+      max-width: 340px;
+      border-left: 4px solid #28a745;
+    }
+    #help-panel.open { display: block; }
+    #help-panel h3 { margin: 0 0 10px; font-size: 14px; color: #155724; }
+    #help-panel ol { margin: 0; padding-left: 18px; font-size: 13px; color: #333; line-height: 1.6; }
+    #help-panel ul { margin: 4px 0 4px 4px; padding-left: 16px; }
+    #help-panel .help-close {
+      position: absolute; top: 8px; right: 10px;
+      background: none; border: none; font-size: 16px; cursor: pointer;
+      color: #888; padding: 0; margin: 0; line-height: 1;
+    }
+    .help-control-btn { font-size: 0 !important; font-weight: bold; }
+    .help-control-btn::after {
+      content: "?";
+      font-size: 16px;
+      font-weight: 900;
+      font-family: Arial, sans-serif;
+    }
+
+    /* ── Save Leaflet control ── */
+    .save-control-btn { font-size: 0 !important; }
+    .save-control-btn::after {
+      content: "\f0c7";
+      font-family: "Font Awesome 6 Free"; font-weight: 900; font-size: 15px;
+      color: #28a745;
+    }
+
+    /* ── Toast notifications ── */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 10500;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-msg {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.14);
+      padding: 12px 16px;
+      font-size: 13px;
+      min-width: 220px;
+      max-width: 360px;
+      pointer-events: auto;
+      animation: toast-slide 0.28s ease forwards;
+    }
+    .toast-msg.removing { animation: toast-fade 0.3s ease forwards; }
+    @keyframes toast-slide {
+      from { transform: translateX(110%); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+    @keyframes toast-fade {
+      to { opacity: 0; transform: translateX(30px); }
+    }
+    .toast-msg.success { border-left: 4px solid #28a745; }
+    .toast-msg.error   { border-left: 4px solid #dc3545; }
+    .toast-msg.warning { border-left: 4px solid #ffc107; }
+    .toast-msg.info    { border-left: 4px solid #007bff; }
+    .toast-icon { font-size: 15px; flex-shrink: 0; }
+    .toast-msg.success .toast-icon { color: #28a745; }
+    .toast-msg.error   .toast-icon { color: #dc3545; }
+    .toast-msg.warning .toast-icon { color: #e0a800; }
+    .toast-msg.info    .toast-icon { color: #007bff; }
+
+    /* ── Channel tile picker ── */
+    .ch-picker {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 3px;
+      margin: 3px 0 4px;
+      width: 100%;
+    }
+    .ch-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 1px;
+      border-radius: 5px;
+      border: 1.5px solid #dee2e6;
+      background: #f8f9fa;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s, border-color 0.12s, transform 0.1s, box-shadow 0.12s;
+    }
+    .ch-tile:hover {
+      background: #dde6ff;
+      border-color: #99aee8;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(13,110,253,0.15);
+    }
+    .ch-tile.ch-selected {
+      background: #0d6efd;
+      border-color: #0a58ca;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(13,110,253,0.35);
+    }
+    .ch-tile-num {
+      font-size: 8.5px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0.2px;
+    }
+    .ch-tile-freq {
+      font-size: 6.5px;
+      line-height: 1;
+      margin-top: 2px;
+      opacity: 0.75;
+    }
+    .ch-tile.ch-selected .ch-tile-freq { opacity: 0.9; }
+    .ch-picker-label {
+      font-size: 11px;
+      font-weight: bold;
+      color: #495057;
+      margin-bottom: 3px;
+      display: block;
+    }
+
+    /* ── Arrow bold highlight while popup open ── */
+    .ant-item-highlighted {
+      background: #fff3cd !important;
+      border-color: #ffc107 !important;
+      box-shadow: 0 0 0 2px #ffc10780 !important;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    /* ── Virtual Antenna Modal (red) ── */
+    #vant-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      z-index: 10000;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(3px);
+    }
+    #vant-modal-overlay.active { display: flex; }
+    .vant-modal-box {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.28);
+      min-width: 300px;
+      max-width: 380px;
+      width: 90%;
+      overflow: hidden;
+      animation: vant-pop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes vant-pop {
+      from { transform: scale(0.88); opacity: 0; }
+      to   { transform: scale(1);    opacity: 1; }
+    }
+    .vant-modal-header {
+      background: linear-gradient(135deg, #a80000 0%, #dc3545 100%);
+      color: white;
+      padding: 16px 20px 12px;
+    }
+    .vant-modal-header-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .vant-modal-header-top h3 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .2px; }
+    .vant-modal-az-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 12px;
+    }
+    .vant-modal-az-badge .az-val { font-weight: 700; font-size: 13px; }
+    .vant-modal-body { padding: 18px 20px 6px; }
+    .vant-modal-field { margin-bottom: 15px; }
+    .vant-modal-field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 5px;
+    }
+    .vant-input-row {
+      display: flex;
+      align-items: stretch;
+      border: 1.5px solid #dee2e6;
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .vant-input-row:focus-within {
+      border-color: #dc3545;
+      box-shadow: 0 0 0 3px rgba(220,53,69,0.13);
+    }
+    .vant-input-row input[type=number] {
+      border: none;
+      outline: none;
+      padding: 9px 12px;
+      font-size: 14px;
+      flex: 1;
+      min-width: 0;
+      background: transparent;
+    }
+    .vant-input-row .input-unit {
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6c757d;
+      background: #f8f9fa;
+      border-left: 1.5px solid #dee2e6;
+      display: flex;
+      align-items: center;
+      user-select: none;
+    }
+    .vant-modal-footer {
+      padding: 12px 20px;
+      background: #f8f9fa;
+      border-top: 1px solid #e9ecef;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .vant-btn {
+      padding: 8px 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .vant-btn:active { transform: scale(0.97); }
+    .vant-btn-confirm { background: #dc3545; color: #fff; }
+    .vant-btn-confirm:hover { background: #a80000; }
+    .vant-btn-dismiss { background: #e9ecef; color: #495057; }
+    .vant-btn-dismiss:hover { background: #dee2e6; }
+
+  </style>
+</head>
+<body>
+
+  <div id="map-container">
+
+    <!-- Help panel (toggled by "?" map control) -->
+    <div id="help-panel">
+      <button class="help-close" onclick="document.getElementById('help-panel').classList.remove('open')" title="Close">&#x2715;</button>
+      <h3>How to use</h3>
+      <ol>
+        <li><strong style="color:#007bff;">Blue markers</strong> = real deployed antennas (read-only). Click one to inspect its parameters.</li>
+        <li>Use the <strong>Marker</strong> draw tool (&#xf3c5;) to drop a new <strong style="color:#dc3545;">virtual base station</strong> (red). A popup opens immediately.</li>
+        <li>In the popup click <em>Add New Antenna</em>, then drag the mouse to aim the azimuth arrow, and the antenna is created. Edit its parameters (azimuth, frequency, power, gain) directly in the popup and click <em>Save</em> per antenna.
+          <ul>
+            <li>Use <em>Move</em> to drag the whole station to a new position.</li>
+            <li>Use <em>Delete</em> on individual antennas or on the station itself to remove them.</li>
+          </ul>
+        </li>
+        <li><strong>CBRS channel panel</strong> (top of map): 15 tiles cover CH1–CH15 (3550–3690 MHz in 10 MHz steps). <span style="color:#28a745;font-weight:600;">Green</span> = available; <span style="color:#dc3545;font-weight:600;">Red</span> = occupied. Click a red tile to see which antennas use that channel — the matching arrows flash orange and an aura pulse appears on the station.</li>
+        <li><strong style="color:#6610f2;">&#xf522; Random BS Generator</strong> (dice toolbar button): opens a form to generate multiple virtual stations at once. Set the number of stations and antennas per station, the max scatter radius, and the Tx power / Tx gain ranges for random assignment.</li>
+        <li>When ready, click the <strong style="color:#28a745;">&#128190; Save</strong> toolbar button to save the scenario and return to the terminal.</li>
+      </ol>
+    </div>
+
+    <div id="map"></div>
+
+    <!-- CBRS Channel Panel -->
+    <div id="cbrs-panel">
+      <div class="cbrs-panel-title">CBRS Band &mdash; 3.5 GHz Channels</div>
+      <div class="cbrs-channels-row" id="cbrs-channels-row"></div>
+    </div>
+
+    <!-- Channel info popup (floats above the CBRS panel) -->
+    <div id="ch-info-popup">
+      <button class="ch-popup-close" onclick="closeChInfoPopup()" title="Close">&#x2715;</button>
+      <h4 id="ch-info-title"></h4>
+      <ul id="ch-info-list"></ul>
+    </div>
+
+  </div><!-- end #map-container -->
+
+  <!-- Random Generator Modal -->
+  <div id="randgen-overlay">
+    <div class="randgen-box">
+      <div class="randgen-header">
+        <i class="fa-solid fa-dice"></i>
+        <h3>Random BS Generator</h3>
+      </div>
+      <div class="randgen-body">
+        <div class="rg-field">
+          <label>Number of Base Stations</label>
+          <div class="rg-row">
+            <div class="rg-input-wrap">
+              <input id="rg-nstations" type="number" value="2" min="1" max="30"/>
+            </div>
+          </div>
+        </div>
+        <div class="rg-field">
+          <label>Antennas per Station</label>
+          <div class="rg-row">
+            <div class="rg-input-wrap">
+              <input id="rg-nants" type="number" value="2" min="1" max="8"/>
+            </div>
+          </div>
+        </div>
+        <div class="rg-field">
+          <label>Max Radius from Center</label>
+          <div class="rg-row">
+            <div class="rg-input-wrap">
+              <input id="rg-radius" type="number" value="2000" min="100"/>
+              <span class="rg-unit">m</span>
+            </div>
+          </div>
+        </div>
+        <div class="rg-field">
+          <label>Tx Power — min/max for random generation</label>
+          <div class="rg-row">
+            <div class="rg-input-wrap">
+              <input id="rg-ptx-min" type="number" value="40" step="0.1"/>
+              <span class="rg-unit">dBm min</span>
+            </div>
+            <div class="rg-input-wrap">
+              <input id="rg-ptx-max" type="number" value="50" step="0.1"/>
+              <span class="rg-unit">dBm max</span>
+            </div>
+          </div>
+        </div>
+        <div class="rg-field">
+          <label>Tx Gain — min/max for random generation</label>
+          <div class="rg-row">
+            <div class="rg-input-wrap">
+              <input id="rg-gtx-min" type="number" value="15" step="0.1"/>
+              <span class="rg-unit">dBi min</span>
+            </div>
+            <div class="rg-input-wrap">
+              <input id="rg-gtx-max" type="number" value="20" step="0.1"/>
+              <span class="rg-unit">dBi max</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="randgen-footer">
+        <button class="rg-btn rg-btn-dismiss" onclick="closeRandGenModal()">Cancel</button>
+        <button class="rg-btn rg-btn-confirm" onclick="confirmRandomGen()">
+          <i class="fa-solid fa-dice"></i>&nbsp; Generate
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Virtual Antenna Modal (red) -->
+  <div id="vant-modal-overlay">
+    <div class="vant-modal-box">
+      <div class="vant-modal-header">
+        <div class="vant-modal-header-top">
+          <i class="fa-solid fa-tower-broadcast"></i>
+          <h3>New Virtual Antenna</h3>
+        </div>
+        <div class="vant-modal-az-badge">
+          Azimuth &nbsp;<span class="az-val" id="vant-modal-az-display">0°</span>
+        </div>
+      </div>
+      <div class="vant-modal-body">
+        <div class="vant-modal-field">
+          <label>Frequency</label>
+          <div class="vant-input-row">
+            <input id="vant-modal-freq" type="number" value="3560" step="1" min="1" />
+            <span class="input-unit">MHz</span>
+          </div>
+        </div>
+        <div class="vant-modal-field">
+          <label>TX Power</label>
+          <div class="vant-input-row">
+            <input id="vant-modal-ptx" type="number" value="47" step="0.1" />
+            <span class="input-unit">dBm</span>
+          </div>
+        </div>
+        <div class="vant-modal-field">
+          <label>TX Gain</label>
+          <div class="vant-input-row">
+            <input id="vant-modal-gtx" type="number" value="19.5" step="0.1" />
+            <span class="input-unit">dBi</span>
+          </div>
+        </div>
+      </div>
+      <div class="vant-modal-footer">
+        <button class="vant-btn vant-btn-dismiss" id="vant-modal-cancel">Cancel</button>
+        <button class="vant-btn vant-btn-confirm" id="vant-modal-ok">
+          <i class="fa-solid fa-plus"></i>&nbsp; Add Antenna
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Leaflet.draw JS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet.path.drag@0.0.6/src/Path.Drag.min.js"></script>
+
+  <script>
+    let map;
+    let drawnItems;
+    let scenarioData = null; // from /get_current_scenario
+
+    // We no longer use a simple "realAntennaCounter" for each marker.
+    // Instead, we group real antennas by location so that all real antennas
+    // at the same lat/lng share the same "Real Base Station #N."
+    let realStationNumberCounter = 0;
+    const realStationsByLocation = {}; 
+      // key = "lat|lng", value = { stationNumber: X, antennaCount: Y }
+
+    // For virtual base stations (red):
+    let virtualBaseStationCounter = 0;
+
+    let drawControl;
+
+    //==================================================
+    // 1) INITIALIZE MAP
+    //==================================================
+    function initMap() {
+      map = L.map('map').setView([42.900764, -78.865053], 13);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+
+      drawnItems = new L.FeatureGroup();
+      map.addLayer(drawnItems);
+
+      drawControl = new L.Control.Draw({
+        draw: {
+          polygon: false,
+          rectangle: false,
+          circle: false,
+          polyline: false,
+          circlemarker: false,
+          marker: true   // we only allow adding new (virtual) base stations
+        },
+        edit: false
+      });
+      map.addControl(drawControl);
+
+      // Save Scenario control (floppy-disk icon, green)
+      const SaveControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'save-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Save Scenario';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            onSaveScenario();
+          });
+          return container;
+        }
+      });
+      map.addControl(new SaveControl());
+
+      // "?" help control — toggles the #help-panel
+      const HelpControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'help-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Help';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            document.getElementById('help-panel').classList.toggle('open');
+          });
+          return container;
+        }
+      });
+      map.addControl(new HelpControl());
+
+      // Random BS Generator control (dice icon, purple)
+      const RandGenControl = L.Control.extend({
+        options: { position: 'topleft' },
+        onAdd: function() {
+          const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+          const btn = L.DomUtil.create('a', 'randgen-control-btn', container);
+          btn.href = '#';
+          btn.title = 'Random BS Generator';
+          L.DomEvent.disableClickPropagation(btn);
+          L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stop(e);
+            openRandGenModal();
+          });
+          return container;
+        }
+      });
+      map.addControl(new RandGenControl());
+
+      // Close channel info popup on map click
+      map.on('click', () => closeChInfoPopup());
+
+      // When a new marker is created => treat it as a new "virtual" base station
+      map.on(L.Draw.Event.CREATED, (e) => {
+        const layer = e.layer;
+        drawnItems.addLayer(layer);
+        if (layer instanceof L.Marker) {
+          initVirtualBaseStation(layer);
+          updateCBRSPanel();
+        }
+      });
+    }
+
+    //==================================================
+    // 2) HELPER: AZIMUTH CALC + DRAW ARROW
+    //==================================================
+    function calculateAzimuth(lat1, lon1, lat2, lon2) {
+      const rad = Math.PI / 180;
+      lat1 *= rad; lon1 *= rad;
+      lat2 *= rad; lon2 *= rad;
+      const dlon = lon2 - lon1;
+      const y = Math.sin(dlon) * Math.cos(lat2);
+      const x = Math.cos(lat1)*Math.sin(lat2) -
+                Math.sin(lat1)*Math.cos(lat2)*Math.cos(dlon);
+      const brng = Math.atan2(y, x) * (180 / Math.PI);
+      return (brng + 360) % 360;
+    }
+
+    /**
+     * Draws the azimuth arrow using a group of three line segments
+     * (main line + 2 arrowheads).
+     *
+     * @param {Number} lat 
+     * @param {Number} lon 
+     * @param {Number} azimuth 
+     * @param {String} color 
+     * @param {String} shortName  // e.g. "Real BS #1 - Antenna #2" (shown on hover)
+     */
+    function drawDirectionLine(lat, lon, azimuth, color, shortName, clickInfo) {
+      const radius = 200;
+      const azRad = azimuth * (Math.PI / 180);
+
+      const dLat = (radius * Math.cos(azRad)) / 111320;
+      const dLon = (radius * Math.sin(azRad)) /
+                   (111320 * Math.cos(lat * (Math.PI / 180)));
+      const endLat = lat + dLat;
+      const endLon = lon + dLon;
+
+      const style = { color, weight: 2, opacity: 1, smoothFactor: 1.5 };
+      const mainLine = L.polyline([[lat, lon], [endLat, endLon]], style);
+
+      // arrowheads
+      const headLength = radius * 0.3;
+      const headAngle = 25;
+      const leftAngle = azimuth - 180 + headAngle;
+      const rightAngle = azimuth - 180 - headAngle;
+      const leftRad = leftAngle * (Math.PI / 180);
+      const rightRad = rightAngle * (Math.PI / 180);
+
+      const leftLat = endLat + (headLength * Math.cos(leftRad)) / 111320;
+      const leftLon = endLon + (headLength * Math.sin(leftRad)) /
+                      (111320 * Math.cos(endLat * (Math.PI / 180)));
+      const rightLat = endLat + (headLength * Math.cos(rightRad)) / 111320;
+      const rightLon = endLon + (headLength * Math.sin(rightRad)) /
+                       (111320 * Math.cos(endLat * (Math.PI / 180)));
+
+      const leftLine = L.polyline([[endLat, endLon], [leftLat, leftLon]], style);
+      const rightLine = L.polyline([[endLat, endLon], [rightLat, rightLon]], style);
+
+      const group = L.layerGroup([mainLine, leftLine, rightLine]).addTo(map);
+
+      group.eachLayer(layer => {
+        layer.bindTooltip(shortName, { sticky: true });
+        if (clickInfo) {
+          layer.on('click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            handleArrowClick(group, color, clickInfo.marker, clickInfo.antIdx);
+          });
+        }
+      });
+      return group;
+    }
+
+    function handleArrowClick(group, origColor, marker, antIdx) {
+      const p = marker.feature.properties;
+      const isVirtual = p.type === 'basestation';
+      setArrowBold(group, origColor, true);
+      if (isVirtual) {
+        showBaseStationPopup(marker, antIdx);
+      } else {
+        showAntennaPopup(marker, false);
+      }
+      marker.once('popupclose', function() {
+        setArrowBold(group, origColor, false);
+      });
+    }
+
+    function setArrowBold(group, color, bold) {
+      if (!group) return;
+      group.eachLayer(sub => {
+        if (sub instanceof L.Polyline) sub.setStyle({ weight: bold ? 4 : 2, color: color });
+      });
+    }
+
+    function selectChannel(inputId, freq, el) {
+      document.getElementById(inputId).value = freq;
+      el.closest('.ch-picker').querySelectorAll('.ch-tile').forEach(t => t.classList.remove('ch-selected'));
+      el.classList.add('ch-selected');
+    }
+
+    //==================================================
+    // 3) INIT REAL ANTENNA MARKER (BLUE)
+    //==================================================
+    function initRealAntennaMarker(marker) {
+      // Real antennas are read-only
+      marker.dragging.disable();
+      const props = marker.feature.properties;
+      if (!props) return;
+
+      // We expect that the loadScenario() function has already
+      // assigned `bsNumber` and `antennaNumber` for each real antenna
+      // based on grouping them by location.
+
+      // Add tooltip to the marker
+      marker.bindTooltip(`Real BS #${props.bsNumber}`, {
+        permanent: false,
+        direction: 'top',
+        offset: [0, -32],
+        className: 'marker-tooltip'
+      });
+
+      // Prepare a short label for the arrow
+      const shortLabel = `Real BS #${props.bsNumber} - Antenna #${props.antennaNumber}`;
+
+      // Draw the arrow
+      const lat = marker.getLatLng().lat;
+      const lon = marker.getLatLng().lng;
+      const az = props.azimuth || 0;
+      props.directionLine = drawDirectionLine(lat, lon, az, '#0000FF', shortLabel, { marker: marker, antIdx: -1 });
+
+      // If user clicks the marker => show popup
+      marker.on('click', () => {
+        showAntennaPopup(marker, false);
+      });
+    }
+
+    //==================================================
+    // 4) RED (VIRTUAL) SINGLE-ANTENNA APPROACH (unused)
+    //   (We rely on "basestation" approach below)
+    //==================================================
+    function initRedAntenna(marker) {
+      // Not used in this example, but left here if needed
+      marker.feature = {
+        type: "Feature",
+        properties: {
+          type: "custom_antenna",
+          azimuth: 0,
+          frequency: 3560,
+          Ptx: 47,
+          Gtx: 19.5,
+          height: 30
+        }
+      };
+      marker.setIcon(L.icon({
+        iconUrl: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+        iconSize: [32, 32],
+        iconAnchor: [16, 32]
+      }));
+    }
+
+    //==================================================
+    // 5) COMMON POPUP FOR ANY ANTENNA MARKER
+    //==================================================
+    function showAntennaPopup(marker, isVirtual) {
+      const props = marker.feature.properties;
+      if (!props) return;
+
+      const markerId = marker._leaflet_id;
+      const titleClass = isVirtual ? "red" : "blue";
+      const titleText = isVirtual
+        ? `Virtual Base Station #${props.bsNumber}`
+        : `Real Base Station #${props.bsNumber}`;
+
+      // If it's real, we may have multiple real antennas at the same location
+      let antennasHtml = '';
+      if (!isVirtual) {
+        // gather all real_antenna markers at exactly same lat/lng
+        const sameLoc = [];
+        map.eachLayer(l => {
+          if (l instanceof L.Marker && l.feature && l.feature.properties) {
+            const fp = l.feature.properties;
+            if (fp.type === "real_antenna") {
+              const latlng1 = l.getLatLng();
+              const latlng2 = marker.getLatLng();
+              if (latlng1.lat === latlng2.lat && latlng1.lng === latlng2.lng) {
+                sameLoc.push({ props: fp, mid: l._leaflet_id });
+              }
+            }
+          }
+        });
+        if (sameLoc.length > 0) {
+          antennasHtml = `
+            <div class="real-antennas-container">
+              <div class="real-antennas-header">
+                ${sameLoc.length} Antenna${sameLoc.length > 1 ? 's' : ''} at this Location
+              </div>
+              <div class="real-antennas-grid">
+              ${
+                sameLoc.map(ant => `
+                  <div class="real-antenna-card">
+                    <div class="antenna-card-header">
+                      <i class="fas fa-broadcast-tower"></i> Antenna #${ant.props.antennaNumber}
+                    </div>
+                    <div style="padding:4px 6px;">
+                      <div class="param-row">
+                        <span class="param-label">Az (°):</span>
+                        <input id="ra-az-${ant.mid}" class="param-input" type="number" step="1" value="${ant.props.azimuth}" />
+                      </div>
+                      <div class="param-row">
+                        <span class="param-label">Freq (MHz):</span>
+                        <input id="ra-freq-${ant.mid}" class="param-input" type="number" step="1" min="1" value="${ant.props.frequency}" />
+                      </div>
+                      <div class="param-row">
+                        <span class="param-label">Power (dBm):</span>
+                        <input id="ra-ptx-${ant.mid}" class="param-input" type="number" step="0.1" value="${ant.props.Ptx}" />
+                      </div>
+                      <div class="param-row">
+                        <span class="param-label">Gain (dBi):</span>
+                        <input id="ra-gtx-${ant.mid}" class="param-input" type="number" step="0.1" value="${ant.props.Gtx}" />
+                      </div>
+                      <div class="param-row">
+                        <span class="param-label">Height (m):</span>
+                        <input id="ra-h-${ant.mid}" class="param-input" type="number" step="0.1" value="${ant.props.height}" />
+                      </div>
+                      <div style="display:flex;gap:4px;margin-top:4px;">
+                        <button onclick="updateRealAntenna(${ant.mid})"
+                                style="background:#007bff;color:white;border:none;padding:3px 6px;
+                                       border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')
+              }
+              </div>
+            </div>
+          `;
+        }
+      }
+
+      // For virtual, allow editing. For real => read-only
+      const readOnly = isVirtual ? '' : 'readonly';
+
+      const popupHtml = `
+        <div class="antenna-popup">
+          <div class="title ${titleClass}">${titleText}</div>
+          ${antennasHtml}
+          ${
+            isVirtual 
+            ? `<div class="param-row">
+                <span class="param-label">Azimuth (°)</span>
+                <input id="az-${markerId}" class="param-input" type="number" value="${props.azimuth}" />
+               </div>
+               <div class="param-row">
+                <span class="param-label">Frequency (MHz)</span>
+                <input id="freq-${markerId}" class="param-input" type="number" step="0.1" value="${props.frequency}" />
+               </div>
+               <div class="param-row">
+                <span class="param-label">Tx Power (dBm)</span>
+                <input id="ptx-${markerId}" class="param-input" type="number" value="${props.Ptx}" />
+               </div>
+               <div class="param-row">
+                <span class="param-label">Tx Gain (dBi)</span>
+                <input id="gtx-${markerId}" class="param-input" type="number" step="0.1" value="${props.Gtx}" />
+               </div>
+               <div class="param-row">
+                <span class="param-label">Height (m)</span>
+                <input id="h-${markerId}" class="param-input" type="number" step="0.1" value="${props.height}" />
+               </div>
+               <div class="buttons">
+                <button class="save-btn" onclick="updateAntenna(${markerId}, true)">Save</button>
+                <button class="move-btn" onclick="moveAntenna(${markerId})">Move</button>
+                <button class="delete-btn" onclick="deleteAntenna(${markerId})">Delete</button>
+               </div>`
+            : ''
+          }
+        </div>
+      `;
+
+      marker.unbindPopup().bindPopup(popupHtml, {
+        maxWidth: isVirtual ? 220 : 300,
+        minWidth: 200,
+        className: 'improved-popup'
+      }).openPopup();
+
+      // optional dynamic style injection for real antennas
+      injectRealAntennasStyles();
+    }
+
+    function injectRealAntennasStyles() {
+      if (document.querySelector('#real-antennas-styles')) return;
+      const newStyles = `
+        <style id="real-antennas-styles">
+          .real-antennas-container {
+            margin: 10px 0;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            overflow: hidden;
+          }
+          .real-antennas-header {
+            background: #f8f9fa;
+            padding: 8px;
+            font-weight: bold;
+            color: #007bff;
+            border-bottom: 1px solid #dee2e6;
+            font-size: 12px;
+          }
+          .real-antennas-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            padding: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+          }
+          .real-antenna-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+          }
+          .antenna-card-header {
+            background: #007bff;
+            color: white;
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: bold;
+          }
+          .antenna-card-content {
+            padding: 8px;
+          }
+          .antenna-params-table {
+            width: 100%;
+            font-size: 11px;
+            border-collapse: collapse;
+          }
+          .antenna-params-table td {
+            padding: 2px 4px;
+            color: #495057;
+          }
+          .antenna-params-table td:first-child {
+            width: 40%;
+            color: #6c757d;
+          }
+        </style>
+      `;
+      const styleEl = document.createElement('div');
+      styleEl.innerHTML = newStyles;
+      document.head.appendChild(styleEl.firstChild);
+    }
+
+    function removeDirectionLine(props) {
+      if (!props || !props.directionLine) return;
+      const group = props.directionLine;
+      if (group instanceof L.LayerGroup) {
+        group.eachLayer(sub => map.removeLayer(sub));
+        map.removeLayer(group);
+      } else {
+        map.removeLayer(group);
+      }
+      props.directionLine = null;
+    }
+
+    // Update a (virtual) antenna's parameters and re-draw the arrow
+    function updateAntenna(markerId, isVirtual) {
+      const marker = drawnItems.getLayer(markerId) || findMarkerById(markerId);
+      if (!marker) return;
+
+      const props = marker.feature.properties;
+      const mId = marker._leaflet_id;
+      const newAzimuth = parseFloat(document.getElementById(`az-${mId}`).value) || 0;
+      const newFreq   = parseFloat(document.getElementById(`freq-${mId}`).value) || 3560;
+      const newPtx    = parseFloat(document.getElementById(`ptx-${mId}`).value) || 47;
+      const newGtx    = parseFloat(document.getElementById(`gtx-${mId}`).value) || 19.5;
+      const newH      = parseFloat(document.getElementById(`h-${mId}`).value) || 30;
+
+      removeDirectionLine(props);
+
+      props.azimuth = newAzimuth;
+      props.frequency = newFreq;
+      props.Ptx = newPtx;
+      props.Gtx = newGtx;
+      props.height = newH;
+
+      const ll = marker.getLatLng();
+      const shortLabel = isVirtual
+        ? `Virtual BS #${props.bsNumber} - Antenna #1`
+        : `Real BS #${props.bsNumber} - Antenna #${props.antennaNumber}`;
+
+      props.directionLine = drawDirectionLine(ll.lat, ll.lng, newAzimuth,
+        isVirtual ? '#ff0000' : '#0000FF', shortLabel, { marker: marker, antIdx: -1 });
+
+      marker.closePopup();
+      // reopen the popup
+      setTimeout(() => showAntennaPopup(marker, isVirtual), 100);
+
+      showToast("Antenna parameters updated.", "success");
+      updateCBRSPanel();
+    }
+
+    function deleteAntenna(markerId) {
+      const layer = drawnItems.getLayer(markerId) || findMarkerById(markerId);
+      if (!layer) return;
+
+      removeDirectionLine(layer.feature.properties);
+      drawnItems.removeLayer(layer);
+      map.removeLayer(layer);
+      updateCBRSPanel();
+    }
+
+    function moveAntenna(markerId) {
+      const marker = drawnItems.getLayer(markerId) || findMarkerById(markerId);
+      if (!marker) return;
+
+      marker.off('drag').off('dragend');
+      marker.dragging.enable();
+      marker.closePopup();
+
+      removeDirectionLine(marker.feature.properties);
+
+      marker.on('dragend', () => {
+        const props = marker.feature.properties;
+        const ll = marker.getLatLng();
+
+        const shortLabel = props.type === "basestation"
+          ? `Virtual BS #${props.bsNumber} - Antenna #1`
+          : `Real BS #${props.bsNumber} - Antenna #${props.antennaNumber}`;
+
+        props.directionLine = drawDirectionLine(
+          ll.lat, ll.lng,
+          props.azimuth,
+          props.type === "basestation" ? '#ff0000' : '#0000FF',
+          shortLabel,
+          { marker: marker, antIdx: -1 }
+        );
+
+        showAntennaPopup(marker, props.type === "basestation");
+        marker.dragging.disable();
+        marker.off('drag').off('dragend');
+      });
+    }
+
+    function findMarkerById(markerId) {
+      let found = null;
+      map.eachLayer(l => {
+        if (l._leaflet_id === markerId) found = l;
+      });
+      return found;
+    }
+
+    //==================================================
+    // 6) VIRTUAL BASE STATION (RED) MULTI-ANTENNA
+    //==================================================
+    function initVirtualBaseStation(marker) {
+      // Each new red station gets a new station number
+      virtualBaseStationCounter++;
+      marker.feature = {
+        type: "Feature",
+        properties: {
+          type: "basestation",
+          bsNumber: virtualBaseStationCounter,
+          antennas: [],
+          height: 30
+        }
+      };
+
+      // Add tooltip to the marker
+      marker.bindTooltip(`Virtual BS #${virtualBaseStationCounter}`, {
+        permanent: false,
+        direction: 'top',
+        offset: [0, -32],
+        className: 'marker-tooltip'
+      });
+
+      marker.setIcon(L.icon({
+        iconUrl: 'https://maps.google.com/mapfiles/ms/icons/red.png',
+        iconSize: [32, 32],
+        iconAnchor: [16, 32]
+      }));
+      showBaseStationPopup(marker);
+    }
+
+    function showBaseStationPopup(marker, highlightAntIdx) {
+      const p = marker.feature.properties;
+      const markerId = marker._leaflet_id;
+
+      let antennasHtml = '';
+      p.antennas.forEach((ant, idx) => {
+        const antH = ant.height !== undefined ? ant.height : p.height;
+        antennasHtml += `
+          <div class="antenna-item" id="ant-item-${markerId}-${idx}">
+            <h4>Antenna #${idx + 1}</h4>
+            <div class="param-row">
+              <span class="param-label">Az (°):</span>
+              <input id="bs-az-${markerId}-${idx}" class="param-input" type="number" step="1" min="0" max="360" value="${ant.azimuth}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">Freq (MHz):</span>
+              <input id="bs-freq-${markerId}-${idx}" class="param-input" type="number" step="1" min="1" value="${ant.frequency}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">Power (dBm):</span>
+              <input id="bs-ptx-${markerId}-${idx}" class="param-input" type="number" step="0.1" value="${ant.Ptx}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">Gain (dBi):</span>
+              <input id="bs-gtx-${markerId}-${idx}" class="param-input" type="number" step="0.1" value="${ant.Gtx}" />
+            </div>
+            <div class="param-row">
+              <span class="param-label">Height (m):</span>
+              <input id="bs-h-${markerId}-${idx}" class="param-input" type="number" step="0.1" value="${antH}" />
+            </div>
+            <div style="display:flex;gap:4px;margin-top:4px;">
+              <button onclick="updateAntennaInBS(${markerId}, ${idx})"
+                      style="background:#28a745;color:white;border:none;padding:3px 6px;
+                             border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                Save
+              </button>
+              <button onclick="deleteAntennaFromBS(${markerId}, ${idx})"
+                      style="background:#dc3545;color:white;border:none;padding:3px 6px;
+                             border-radius:3px;font-size:10px;flex:1;cursor:pointer;">
+                Delete
+              </button>
+            </div>
+          </div>
+        `;
+      });
+
+      const html = `
+        <div class="basestation-popup">
+          <div class="title">Virtual Base Station #${p.bsNumber}</div>
+          <div class="param-row" title="Default height inherited by new antennas added to this station">
+            <span class="param-label">Default height:</span>
+            <input id="bs-height-${markerId}" class="param-input" 
+                   type="number" step="0.1" value="${p.height}" /> m
+          </div>
+          <div class="antenna-list">
+            ${antennasHtml}
+          </div>
+          <button class="add-antenna-btn" onclick="addAntennaToBS(${markerId})">
+            Add New Antenna
+          </button>
+          <div class="buttons">
+            <button style="background:#28a745;color:white;" onclick="updateBaseStation(${markerId})">Save</button>
+            <button style="background:#ffc107;color:black;" onclick="moveBaseStation(${markerId})">Move</button>
+            <button style="background:#dc3545;color:white;" onclick="deleteBaseStation(${markerId})">Delete</button>
+          </div>
+        </div>
+      `;
+      marker.bindPopup(html, { maxWidth: 300 }).openPopup();
+      if (highlightAntIdx !== undefined && highlightAntIdx >= 0 && highlightAntIdx < p.antennas.length) {
+        setTimeout(() => {
+          const el = document.getElementById(`ant-item-${markerId}-${highlightAntIdx}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            el.classList.add('ant-item-highlighted');
+            setTimeout(() => el.classList.remove('ant-item-highlighted'), 1500);
+          }
+        }, 100);
+      }
+    }
+
+    function updateAntennaInBS(markerId, antIdx) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+      const p = marker.feature.properties;
+      const ant = p.antennas[antIdx];
+      if (!ant) return;
+
+      const newAz   = parseFloat(document.getElementById(`bs-az-${markerId}-${antIdx}`).value)   || 0;
+      const newFreq = parseInt(document.getElementById(`bs-freq-${markerId}-${antIdx}`).value)   || 3560;
+      const newPtx  = parseFloat(document.getElementById(`bs-ptx-${markerId}-${antIdx}`).value)  || 47;
+      const newGtx  = parseFloat(document.getElementById(`bs-gtx-${markerId}-${antIdx}`).value)  || 19.5;
+      const newH    = parseFloat(document.getElementById(`bs-h-${markerId}-${antIdx}`).value)    || 30;
+
+      // Redraw direction line (azimuth or freq may have changed)
+      removeDirectionLine(ant);
+
+      ant.azimuth   = newAz;
+      ant.frequency = newFreq;
+      ant.Ptx       = newPtx;
+      ant.Gtx       = newGtx;
+      ant.height    = newH;
+
+      const latlng = marker.getLatLng();
+      const lbl = `Virtual BS #${p.bsNumber} - Antenna #${antIdx + 1}`;
+      ant.directionLine = drawDirectionLine(latlng.lat, latlng.lng, newAz, '#ff0000', lbl, { marker: marker, antIdx: antIdx });
+
+      updateCBRSPanel();
+      showToast(`Antenna #${antIdx + 1} updated.`, 'success');
+    }
+
+    function showAntennaModal(azimuth) {
+      return new Promise(resolve => {
+        document.getElementById('vant-modal-az-display').textContent = azimuth + '°';
+        document.getElementById('vant-modal-freq').value = 3560;
+        document.getElementById('vant-modal-ptx').value  = 47;
+        document.getElementById('vant-modal-gtx').value  = 19.5;
+
+        const overlay = document.getElementById('vant-modal-overlay');
+        overlay.classList.add('active');
+        setTimeout(() => {
+          document.getElementById('vant-modal-freq').focus();
+          document.getElementById('vant-modal-freq').select();
+        }, 60);
+
+        function onOk() {
+          const freq = parseFloat(document.getElementById('vant-modal-freq').value) || 3560;
+          const ptx  = parseFloat(document.getElementById('vant-modal-ptx').value)  || 47;
+          const gtx  = parseFloat(document.getElementById('vant-modal-gtx').value)  || 19.5;
+          cleanup();
+          resolve({ freq, ptx, gtx });
+        }
+        function onCancel() { cleanup(); resolve(null); }
+        function onKey(e) {
+          if (e.key === 'Enter')  onOk();
+          if (e.key === 'Escape') onCancel();
+        }
+        function cleanup() {
+          overlay.classList.remove('active');
+          document.getElementById('vant-modal-ok').removeEventListener('click', onOk);
+          document.getElementById('vant-modal-cancel').removeEventListener('click', onCancel);
+          document.removeEventListener('keydown', onKey);
+        }
+        document.getElementById('vant-modal-ok').addEventListener('click', onOk);
+        document.getElementById('vant-modal-cancel').addEventListener('click', onCancel);
+        document.addEventListener('keydown', onKey);
+      });
+    }
+
+    function addAntennaToBS(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      marker.closePopup();
+      const startLL = marker.getLatLng();
+      let tempLine;
+      let isSettingAz = true;
+      let currentMouse = null;
+
+      function onMouseMove(e) {
+        if (!isSettingAz) return;
+        currentMouse = e.latlng;
+        if (tempLine) map.removeLayer(tempLine);
+        tempLine = L.polyline([startLL, e.latlng],
+          { color: '#ff0000', weight: 2, dashArray: '5,5' }
+        ).addTo(map);
+      }
+
+      async function onFinalClick() {
+        if (!isSettingAz) return;
+        isSettingAz = false;
+        map.off('mousemove', onMouseMove);
+        if (tempLine) map.removeLayer(tempLine);
+
+        const endLL = currentMouse || startLL;
+        const az = parseFloat(calculateAzimuth(startLL.lat, startLL.lng, endLL.lat, endLL.lng).toFixed(2));
+
+        const params = await showAntennaModal(az);
+        if (!params) {
+          map.addControl(drawControl);
+          return;
+        }
+
+        const newAnt = {
+          azimuth: az,
+          frequency: params.freq,
+          Ptx: params.ptx,
+          Gtx: params.gtx,
+          height: (marker.feature.properties.height) || 30
+        };
+
+        const p = marker.feature.properties;
+        const antIndex = p.antennas.length + 1;
+        const newAntIdx = p.antennas.length;
+        const shortLabel = `Virtual BS #${p.bsNumber} - Antenna #${antIndex}`;
+
+        newAnt.directionLine = drawDirectionLine(
+          startLL.lat, startLL.lng, az, '#ff0000', shortLabel,
+          { marker: marker, antIdx: newAntIdx }
+        );
+
+        p.antennas.push(newAnt);
+        showBaseStationPopup(marker);
+        map.addControl(drawControl);
+        updateCBRSPanel();
+      }
+
+      map.removeControl(drawControl);
+      map.on('mousemove', onMouseMove);
+      map.once('click', onFinalClick);
+    }
+
+    function deleteAntennaFromBS(markerId, antIdx) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      const arr = marker.feature.properties.antennas;
+      const item = arr[antIdx];
+      removeDirectionLine(item);
+      arr.splice(antIdx, 1);
+
+      // Redraw remaining antennas with updated labels
+      const p = marker.feature.properties;
+      arr.forEach((ant, idx) => {
+        if (ant.directionLine) {
+          ant.directionLine.eachLayer(layer => {
+            map.removeLayer(layer);
+          });
+          ant.directionLine = drawDirectionLine(
+            marker.getLatLng().lat,
+            marker.getLatLng().lng,
+            ant.azimuth,
+            '#ff0000',
+            `Virtual BS #${p.bsNumber} - Antenna #${idx + 1}`,
+            { marker: marker, antIdx: idx }
+          );
+        }
+      });
+
+      showBaseStationPopup(marker);
+      updateCBRSPanel();
+    }
+
+    function deleteBaseStation(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      const arr = marker.feature.properties.antennas;
+      arr.forEach(ant => removeDirectionLine(ant));
+
+      map.removeLayer(marker);
+
+      // Update base station numbering
+      refreshBaseStationNumbers();
+
+      // Redraw all antenna arrows with updated labels
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker && 
+            layer.feature && 
+            layer.feature.properties.type === "basestation") {
+          const p = layer.feature.properties;
+          p.antennas.forEach((ant, idx) => {
+            if (ant.directionLine) {
+              ant.directionLine.eachLayer(l => {
+                map.removeLayer(l);
+              });
+              ant.directionLine = drawDirectionLine(
+                layer.getLatLng().lat,
+                layer.getLatLng().lng,
+                ant.azimuth,
+                '#ff0000',
+                `Virtual BS #${p.bsNumber} - Antenna #${idx + 1}`,
+                { marker: layer, antIdx: idx }
+              );
+            }
+          });
+          showBaseStationPopup(layer);
+        }
+      });
+
+      // Aggiorniamo il pannello DOPO aver completato tutte le operazioni
+      setTimeout(() => updateCBRSPanel(), 100);
+    }
+
+    function refreshBaseStationNumbers() {
+      let currentCount = 0;
+      map.eachLayer(layer => {
+        if (layer instanceof L.Marker && 
+            layer.feature && 
+            layer.feature.properties.type === "basestation") {
+          currentCount++;
+          layer.feature.properties.bsNumber = currentCount;
+
+          // Update tooltip
+          layer.bindTooltip(`Virtual BS #${currentCount}`, {
+            permanent: false,
+            direction: 'top',
+            offset: [0, -32],
+            className: 'marker-tooltip'
+          });
+        }
+      });
+      virtualBaseStationCounter = currentCount;
+    }
+
+    function moveBaseStation(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      marker.closePopup();
+      marker.dragging.enable();
+
+      const arr = marker.feature.properties.antennas;
+      marker.on('drag', () => {
+        // remove old lines
+        if (arr) arr.forEach(ant => removeDirectionLine(ant));
+      });
+
+      marker.on('dragend', () => {
+        const newPos = marker.getLatLng();
+        const p = marker.feature.properties;
+        if (arr) {
+          arr.forEach((ant, idx) => {
+            const shortLabel = `Virtual BS #${p.bsNumber} - Antenna #${idx+1}`;
+            ant.directionLine = drawDirectionLine(
+              newPos.lat, newPos.lng, ant.azimuth, '#ff0000', shortLabel,
+              { marker: marker, antIdx: idx }
+            );
+          });
+        }
+        marker.dragging.disable();
+        showBaseStationPopup(marker);
+      });
+    }
+
+    function updateBaseStation(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+
+      const heightEl = document.getElementById(`bs-height-${markerId}`);
+      const newH = parseFloat(heightEl.value) || 30;
+      marker.feature.properties.height = newH;
+
+      showBaseStationPopup(marker);
+      showToast("Base station default height updated.", "success");
+    }
+
+    function updateRealAntenna(markerId) {
+      const marker = findMarkerById(markerId);
+      if (!marker) return;
+      const props = marker.feature.properties;
+
+      const newAz   = parseFloat(document.getElementById(`ra-az-${markerId}`).value)   || 0;
+      const newFreq = parseInt(document.getElementById(`ra-freq-${markerId}`).value)   || 3560;
+      const newPtx  = parseFloat(document.getElementById(`ra-ptx-${markerId}`).value)  || 47;
+      const newGtx  = parseFloat(document.getElementById(`ra-gtx-${markerId}`).value)  || 19.5;
+      const newH    = parseFloat(document.getElementById(`ra-h-${markerId}`).value)    || 30;
+
+      removeDirectionLine(props);
+
+      props.azimuth   = newAz;
+      props.frequency = newFreq;
+      props.Ptx       = newPtx;
+      props.Gtx       = newGtx;
+      props.height    = newH;
+
+      const ll = marker.getLatLng();
+      const lbl = `Real BS #${props.bsNumber} - Antenna #${props.antennaNumber}`;
+      props.directionLine = drawDirectionLine(ll.lat, ll.lng, newAz, '#0000FF', lbl, { marker: marker, antIdx: -1 });
+
+      updateCBRSPanel();
+      showToast(`Real Antenna #${props.antennaNumber} updated.`, 'success');
+    }
+
+    //==================================================
+    // 7) LOAD SCENARIO
+    //==================================================
+    function loadScenario() {
+      fetch("/get_current_scenario")
+        .then(r => r.json())
+        .then(data => {
+          scenarioData = data;
+          if (!scenarioData.features) return;
+
+          // Clear counters and dictionaries
+          realStationNumberCounter = 0;
+          for (let key in realStationsByLocation) {
+            delete realStationsByLocation[key];
+          }
+          virtualBaseStationCounter = 0;
+
+          // First pass: add polygons if any
+          scenarioData.features.forEach(feat => {
+            if (!feat.geometry) return;
+            if (feat.geometry.type === "Polygon" || feat.geometry.type === "MultiPolygon") {
+              L.geoJSON(feat.geometry, {
+                style: {
+                  color: '#ff5722',
+                  weight: 2,
+                  fillColor: '#ff5722',
+                  fillOpacity: 0.1,
+                  dashArray: '5,5'
+                }
+              }).addTo(map);
+            }
+          });
+
+          // Second pass: handle points
+          scenarioData.features.forEach(feat => {
+            if (!feat.geometry || feat.geometry.type !== "Point") return;
+            const coords = feat.geometry.coordinates;
+            const lat = coords[1];
+            const lng = coords[0];
+            const props = feat.properties || {};
+
+            // If it's real_antenna => group them by location
+            if (props.type === "real_antenna") {
+              const key = lat.toFixed(7) + '|' + lng.toFixed(7);
+              if (!realStationsByLocation[key]) {
+                realStationNumberCounter++;
+                realStationsByLocation[key] = {
+                  stationNumber: realStationNumberCounter,
+                  antennaCount: 0
+                };
+              }
+              const group = realStationsByLocation[key];
+              group.antennaCount++;
+              props.bsNumber = group.stationNumber;
+              props.antennaNumber = group.antennaCount;
+            }
+          });
+
+          // Now actually place the markers
+          scenarioData.features.forEach(feat => {
+            if (!feat.geometry || feat.geometry.type !== "Point") return;
+            const coords = feat.geometry.coordinates;
+            const lat = coords[1];
+            const lng = coords[0];
+            const props = feat.properties || {};
+
+            if (props.type === "real_antenna") {
+              const marker = L.marker([lat, lng], {
+                icon: L.icon({
+                  iconUrl: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+                  iconSize: [32,32],
+                  iconAnchor: [16,32]
+                }),
+                draggable: false
+              }).addTo(map);
+              marker.feature = feat;
+              initRealAntennaMarker(marker);
+            }
+
+          });
+
+          // Auto-fit map to all loaded features so the user lands on the right location
+          const coords = [];
+          scenarioData.features.forEach(feat => {
+            if (!feat.geometry) return;
+            if (feat.geometry.type === 'Point') {
+              coords.push([feat.geometry.coordinates[1], feat.geometry.coordinates[0]]);
+            } else if (feat.geometry.type === 'Polygon') {
+              feat.geometry.coordinates[0].forEach(c => coords.push([c[1], c[0]]));
+            } else if (feat.geometry.type === 'MultiPolygon') {
+              feat.geometry.coordinates.forEach(poly => poly[0].forEach(c => coords.push([c[1], c[0]])));
+            }
+          });
+          if (coords.length > 0) {
+            map.fitBounds(L.latLngBounds(coords), { padding: [60, 60], maxZoom: 14 });
+          }
+
+          updateCBRSPanel();
+        })
+        .catch(err => console.error("Error loading scenario:", err));
+    }
+
+    //==================================================
+    // 8) SAVE SCENARIO
+    //==================================================
+    function onSaveScenario() {
+      let allFeatures = [];
+      let hasBaseStationWithAntenna = false;
+
+      // Preserve area-of-interest polygons if present
+      if (scenarioData && scenarioData.features) {
+        scenarioData.features.forEach(feat => {
+          if (feat.properties && feat.properties.type === "area_of_interest") {
+            allFeatures.push(feat);
+          }
+        });
+      }
+
+      // Collect all markers from the map
+      map.eachLayer(layer => {
+        if (!(layer instanceof L.Marker)) return;
+        const feat = layer.feature;
+        if (!feat || !feat.properties) return;
+
+        const p = feat.properties;
+        const latlng = layer.getLatLng();
+
+        // If it's a "basestation" (virtual, red)
+        if (p.type === "basestation") {
+          if (p.antennas && p.antennas.length > 0) {
+            hasBaseStationWithAntenna = true;
+            // Each sub-antenna becomes a separate feature
+            p.antennas.forEach(ant => {
+              allFeatures.push({
+                type: "Feature",
+                properties: {
+                  type: "custom_antenna",
+                  azimuth: ant.azimuth,
+                  frequency: ant.frequency,
+                  Ptx: ant.Ptx,
+                  Gtx: ant.Gtx,
+                  height: ant.height !== undefined ? ant.height : p.height
+                },
+                geometry: {
+                  type: "Point",
+                  coordinates: [latlng.lng, latlng.lat]
+                }
+              });
+            });
+          }
+        }
+        else {
+          // Real or single custom antenna
+          const newFeat = {
+            type: "Feature",
+            properties: {
+              type: p.type,
+              azimuth: p.azimuth || 0,
+              frequency: p.frequency || 3560,
+              Ptx: p.Ptx || 47,
+              Gtx: p.Gtx || 19.5,
+              height: p.height || 30
+            },
+            geometry: {
+              type: "Point",
+              coordinates: [latlng.lng, latlng.lat]
+            }
+          };
+          allFeatures.push(newFeat);
+        }
+      });
+
+      // We require at least one virtual base station with an antenna
+      if (!hasBaseStationWithAntenna) {
+        showToast("Please place at least one virtual base station (red) with an antenna before saving.", "warning");
+        return;
+      }
+
+      const finalFC = {
+        type: "FeatureCollection",
+        features: allFeatures
+      };
+
+      fetch("/save_custom_scenario", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finalFC)
+      })
+      .then(r => r.json())
+      .then(resp => {
+        if (resp.status === "ok") {
+          showToast("Virtual scenario saved — return to the terminal and press ENTER.", "success", 7000);
+        } else {
+          showToast("Error saving scenario: " + resp.message, "error");
+        }
+      })
+      .catch(err => {
+        console.error("Error saving scenario:", err);
+        showToast("Error: " + err.message, "error");
+      });
+    }
+
+    //==================================================
+    // 9) CBRS CHANNEL PANEL
+    //==================================================
+    const CBRS_CHANNELS = [3550,3560,3570,3580,3590,3600,3610,3620,3630,3640,3650,3660,3670,3680,3690];
+
+    function nearestCBRSChannel(freq) { // kept for backwards-compat with any external references
+      return CBRS_CHANNELS.reduce((prev, curr) =>
+        Math.abs(curr - freq) < Math.abs(prev - freq) ? curr : prev
+      );
+    }
+
+    function updateCBRSPanel() {
+      const CBRS_SET = new Set(CBRS_CHANNELS);
+      // Separate maps: exact CBRS frequency → info, and exact non-CBRS frequency → info
+      const cbrsFreqMap  = {}; // CBRS channel (MHz) → { labels, antPairs }
+      const extraFreqMap = {}; // non-CBRS exact freq (MHz) → { labels, antPairs }
+
+      function addEntry(map, key, label, markerId, antIdx) {
+        if (!map[key]) map[key] = { labels: [], antPairs: [] };
+        map[key].labels.push(label);
+        map[key].antPairs.push({ markerId, antIdx });
+      }
+
+      map.eachLayer(layer => {
+        if (!(layer instanceof L.Marker)) return;
+        const feat = layer.feature;
+        if (!feat || !feat.properties) return;
+        const p = feat.properties;
+        if (p.type === "basestation") {
+          p.antennas.forEach((ant, idx) => {
+            const label = `Virtual BS #${p.bsNumber} – Ant. ${idx + 1} (${ant.frequency} MHz)`;
+            if (CBRS_SET.has(ant.frequency)) {
+              addEntry(cbrsFreqMap, ant.frequency, label, layer._leaflet_id, idx);
+            } else {
+              addEntry(extraFreqMap, ant.frequency, label, layer._leaflet_id, idx);
+            }
+          });
+        } else if (p.type === "real_antenna") {
+          const label = `Real BS #${p.bsNumber} – Ant. ${p.antennaNumber} (${p.frequency} MHz)`;
+          if (CBRS_SET.has(p.frequency)) {
+            addEntry(cbrsFreqMap, p.frequency, label, layer._leaflet_id, -1);
+          } else {
+            addEntry(extraFreqMap, p.frequency, label, layer._leaflet_id, -1);
+          }
+        }
+      });
+
+      const row = document.getElementById('cbrs-channels-row');
+      if (!row) return;
+      row.innerHTML = '';
+
+      CBRS_CHANNELS.forEach((ch, i) => {
+        const info = cbrsFreqMap[ch];
+        const tile = document.createElement('div');
+        const chNum = i + 1;
+        tile.className = `cbrs-ch ${info ? 'occupied' : 'available'}`;
+        tile.title = info
+          ? `CH${chNum}: ${ch} MHz — ${info.labels.length} antenna(s)`
+          : `CH${chNum}: ${ch} MHz — available`;
+        tile.innerHTML = `<span class="ch-num">CH${chNum}</span><span class="ch-freq">${ch}</span>`;
+        if (info) {
+          const snap = { labels: [...info.labels], antPairs: [...info.antPairs] };
+          tile.onclick = (e) => {
+            e.stopPropagation();
+            showChannelInfo(ch, chNum, snap.labels, snap.antPairs);
+          };
+        }
+        row.appendChild(tile);
+      });
+
+      // Non-CBRS frequencies
+      const extraFreqs = Object.keys(extraFreqMap).map(Number).sort((a, b) => a - b);
+      if (extraFreqs.length > 0) {
+        const sep = document.createElement('div');
+        sep.className = 'cbrs-ch-separator';
+        sep.textContent = '|  non-CBRS';
+        row.appendChild(sep);
+
+        extraFreqs.forEach(freq => {
+          const info = extraFreqMap[freq];
+          const tile = document.createElement('div');
+          tile.className = 'cbrs-ch extra-ch';
+          tile.title = `${freq} MHz (non-CBRS) — ${info.labels.length} antenna(s)`;
+          tile.innerHTML = `<span class="ch-num" style="font-size:7.5px;white-space:nowrap;">${freq}</span>`;
+          const snap = { labels: [...info.labels], antPairs: [...info.antPairs] };
+          tile.onclick = (e) => {
+            e.stopPropagation();
+            showChannelInfo(freq, null, snap.labels, snap.antPairs);
+          };
+          row.appendChild(tile);
+        });
+      }
+    }
+
+    function showChannelInfo(freq, chNum, labels, antPairs) {
+      const title = chNum !== null ? `CH${chNum} — ${freq} MHz` : `${freq} MHz (non-CBRS)`;
+      document.getElementById('ch-info-title').textContent = title;
+      const list = document.getElementById('ch-info-list');
+      list.innerHTML = labels.map(l => `<li>${l}</li>`).join('');
+      document.getElementById('ch-info-popup').classList.add('open');
+      flashAntennaHighlight(antPairs);
+    }
+
+    function closeChInfoPopup() {
+      document.getElementById('ch-info-popup').classList.remove('open');
+    }
+
+    function flashAntennaHighlight(antPairs) {
+      const seen = new Set();
+      antPairs.forEach(({ markerId, antIdx }) => {
+        const marker = findMarkerById(markerId);
+        if (!marker) return;
+        const p = marker.feature.properties;
+        const origColor = p.type === "basestation" ? '#ff0000' : '#0000FF';
+
+        // Bold + orange highlight on the specific direction-line
+        const dirLine = antIdx === -1
+          ? p.directionLine
+          : (p.antennas && p.antennas[antIdx] ? p.antennas[antIdx].directionLine : null);
+        if (dirLine instanceof L.LayerGroup) {
+          dirLine.eachLayer(sub => {
+            if (sub instanceof L.Polyline) sub.setStyle({ weight: 5, color: '#ff9500', opacity: 1 });
+          });
+          setTimeout(() => {
+            dirLine.eachLayer(sub => {
+              if (sub instanceof L.Polyline) sub.setStyle({ weight: 2, color: origColor, opacity: 1 });
+            });
+          }, 3200);
+        }
+
+        // Aura ring — one per marker station, deduplicated
+        if (!seen.has(markerId)) {
+          seen.add(markerId);
+          const latlng = marker.getLatLng();
+          const auraIcon = L.divIcon({
+            className: 'aura-icon',
+            html: '<div class="aura-ring"></div>',
+            iconSize: [56, 56],
+            iconAnchor: [28, 42]
+          });
+          const aura = L.marker(latlng, { icon: auraIcon, interactive: false, zIndexOffset: 2000 }).addTo(map);
+          setTimeout(() => { try { map.removeLayer(aura); } catch(ex) {} }, 3200);
+        }
+      });
+    }
+
+    //==================================================
+    // 10) RANDOM BS GENERATOR
+    //==================================================
+    function openRandGenModal() {
+      document.getElementById('randgen-overlay').classList.add('active');
+    }
+
+    function closeRandGenModal() {
+      document.getElementById('randgen-overlay').classList.remove('active');
+    }
+
+    function confirmRandomGen() {
+      const nStations = parseInt(document.getElementById('rg-nstations').value) || 2;
+      const nAnts     = parseInt(document.getElementById('rg-nants').value)     || 2;
+      const radius    = parseFloat(document.getElementById('rg-radius').value)  || 2000;
+      const ptxMin    = parseFloat(document.getElementById('rg-ptx-min').value) || 40;
+      const ptxMax    = parseFloat(document.getElementById('rg-ptx-max').value) || 50;
+      const gtxMin    = parseFloat(document.getElementById('rg-gtx-min').value) || 15;
+      const gtxMax    = parseFloat(document.getElementById('rg-gtx-max').value) || 20;
+      if (ptxMin > ptxMax) { showToast("Min Ptx must be ≤ Max Ptx.", "warning"); return; }
+      if (gtxMin > gtxMax) { showToast("Min Gtx must be ≤ Max Gtx.", "warning"); return; }
+      if (nStations < 1 || nAnts < 1) { showToast("Values must be ≥ 1.", "warning"); return; }
+      closeRandGenModal();
+      generateRandomStations({ nStations, nAnts, radius, ptxMin, ptxMax, gtxMin, gtxMax });
+    }
+
+    function generateRandomStations(cfg) {
+      // Use AOI polygon centroid if present, otherwise current map center
+      let center = map.getCenter();
+      if (scenarioData && scenarioData.features) {
+        for (const feat of scenarioData.features) {
+          if (feat.geometry && (feat.geometry.type === "Polygon" || feat.geometry.type === "MultiPolygon")) {
+            const ring = feat.geometry.type === "Polygon"
+              ? feat.geometry.coordinates[0]
+              : feat.geometry.coordinates[0][0];
+            const avgLat = ring.reduce((s, c) => s + c[1], 0) / ring.length;
+            const avgLon = ring.reduce((s, c) => s + c[0], 0) / ring.length;
+            center = { lat: avgLat, lng: avgLon };
+            break;
+          }
+        }
+      }
+
+      for (let s = 0; s < cfg.nStations; s++) {
+        const angle = Math.random() * 2 * Math.PI;
+        const dist  = Math.random() * cfg.radius;
+        const dlat  = (dist * Math.cos(angle)) / 111320;
+        const dlon  = (dist * Math.sin(angle)) / (111320 * Math.cos(center.lat * Math.PI / 180));
+        const stLat = center.lat + dlat;
+        const stLon = center.lng + dlon;
+
+        const marker = L.marker([stLat, stLon]);
+        drawnItems.addLayer(marker);
+        initVirtualBaseStation(marker);
+        map.closePopup();
+
+        const p = marker.feature.properties;
+        p.height = Math.round((20 + Math.random() * 20) * 10) / 10;
+
+        for (let a = 0; a < cfg.nAnts; a++) {
+          const az   = Math.round(Math.random() * 360 * 100) / 100;
+          const freq = CBRS_CHANNELS[Math.floor(Math.random() * CBRS_CHANNELS.length)];
+          const ptx  = Math.round((cfg.ptxMin + Math.random() * (cfg.ptxMax - cfg.ptxMin)) * 100) / 100;
+          const gtx  = Math.round((cfg.gtxMin + Math.random() * (cfg.gtxMax - cfg.gtxMin)) * 100) / 100;
+          const lbl  = `Virtual BS #${p.bsNumber} - Antenna #${p.antennas.length + 1}`;
+          const dl   = drawDirectionLine(stLat, stLon, az, '#ff0000', lbl, { marker: marker, antIdx: p.antennas.length });
+          p.antennas.push({ azimuth: az, frequency: freq, Ptx: ptx, Gtx: gtx, height: p.height, directionLine: dl });
+        }
+        // Rebind popup with correct antenna list, keep closed
+        showBaseStationPopup(marker);
+        map.closePopup();
+      }
+
+      updateCBRSPanel();
+      showToast(`Generated ${cfg.nStations} station(s) with ${cfg.nAnts} antenna(s) each.`, 'success');
+    }
+
+    //==================================================
+    // START
+    //==================================================
+
+    function showToast(message, type = 'info', duration = 3200) {
+      const icons = { success: '✔', error: '✖', warning: '⚠', info: 'ℹ' };
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast-msg ${type}`;
+      el.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+      container.appendChild(el);
+      setTimeout(() => {
+        el.classList.add('removing');
+        setTimeout(() => el.remove(), 320);
+      }, duration);
+    }
+
+    initMap();
+    loadScenario();
+
+  </script>
+</body>
+</html>

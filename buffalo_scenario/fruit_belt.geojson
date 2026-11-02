@@ -1,0 +1,157 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "site": "Fruit Belt, Buffalo NY",
+    "source": "UB deployment parameter sheet received 2026-09-20, corrected 2026-09-23: azimuths replaced with the site-documentation values (44.5/77.5/110.5/143.5, spaced one 33 deg beamwidth apart), confirmed by Luigi against the site map. The sheet's 61/127/241/241 are not boresights; 241 pointed away from the served area.",
+    "conventions": {
+      "Ptx": "conducted dBm at the antenna port; EIRP = Ptx + Gtx",
+      "downtilt": "engine convention el_off = v_ang + downtilt, so a 1 deg mechanical DOWNtilt is written -1",
+      "frequency": "channel centre in MHz; channel_low/high_mhz carry the real 20 MHz channel",
+      "bandwidth_mhz": "carried into the engine: it sets the thermal noise floor, N_RB for RSRP/RSRQ, the ACI channel width and the Shannon throughput for points served by this antenna"
+    },
+    "unconfirmed": [
+      "Exact antenna part number. Bob: 'Mark just said it was an AW3647'; the T-variant and port count are being confirmed with Mark. The datasheet Luigi supplied (AW3647-T4-F) gives 19.5 dBi, 33 deg azimuth, 7 deg elevation, >27 dB F/B.",
+      "Vertical pattern frequency. The vertical.pat installed 2026-09-23 measures 9.4 deg elevation HPBW against the datasheet's 7 deg; the file does not state which frequency (or which of the vendor's per-frequency cuts) it was derived from. Ask Bob.",
+      "Host building height. GlobalBuildingAtlas gives 53.49 m for the footprint the site falls in, but 33.53 m AGL minus that is -20 m, and the site photograph shows the panels roughly 2-3 m above the roof deck. That puts the real roof near 30-31 m, so the GBA figure is wrong here by roughly 23 m. It is also the obstacle height the diffraction index carries for that footprint.",
+      "Channel-to-sector pairing: interleaved structure (co-channel sectors 66 deg apart) is carried by both pre-existing scenario files; which channel sits on which pair is unconfirmed. Swapping them changes free-space loss by 0.2 dB."
+    ],
+    "confirmed_2026_09_23": {
+      "azimuths": "site documentation values, confirmed by Luigi: 44.5/77.5/110.5/143.5, spaced one 33 deg beamwidth apart.",
+      "tilt": "Bob: 0 deg electrical + 1 deg mechanical downtilt (i.e. the T0 variant). Matches downtilt=-1 in the engine convention.",
+      "power": "Bob: the 29 dBm in the parameter sheet is the TOTAL across all four ports, not per port. EIRP = 29 + 19.5 = 48.5 dBm / 20 MHz = 45.5 dBm / 10 MHz, inside the Part 96 Category B limit.",
+      "height_reference": "Luigi: 33.53 m is ABOVE GROUND LEVEL.",
+      "patterns": "coverage_app/patterns/*.pat replaced with the 30-degree set supplied by Bob (derived from the manufacturer files). Measured on the files: azimuth HPBW 30.8 deg (datasheet 33), F/B within 180+-30 deg 28.4 dB (datasheet >27), elevation HPBW 9.4 deg (datasheet 7, see 'unconfirmed'), beam centre +0.6 deg below the horizon, consistent with the 0 deg electrical tilt of the T0 variant. The previous files (AW3023 H cut, 66 deg; V cut of unknown provenance) were removed; recoverable from git history before this change."
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "area_of_interest"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -78.865971,
+              42.891235
+            ],
+            [
+              -78.871292,
+              42.895136
+            ],
+            [
+              -78.868546,
+              42.903756
+            ],
+            [
+              -78.845203,
+              42.903693
+            ],
+            [
+              -78.845546,
+              42.899352
+            ],
+            [
+              -78.865971,
+              42.891235
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "real_antenna",
+        "name": "BS1",
+        "azimuth": 44.5,
+        "frequency": 3560.0,
+        "channel_low_mhz": 3550,
+        "channel_high_mhz": 3570,
+        "bandwidth_mhz": 20,
+        "Ptx": 29,
+        "Gtx": 19.5,
+        "height": 33.53,
+        "downtilt": -1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -78.865206,
+          42.900705
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "real_antenna",
+        "name": "BS2",
+        "azimuth": 77.5,
+        "frequency": 3640.0,
+        "channel_low_mhz": 3630,
+        "channel_high_mhz": 3650,
+        "bandwidth_mhz": 20,
+        "Ptx": 29,
+        "Gtx": 19.5,
+        "height": 33.53,
+        "downtilt": -1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -78.865206,
+          42.900705
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "real_antenna",
+        "name": "BS3",
+        "azimuth": 110.5,
+        "frequency": 3560.0,
+        "channel_low_mhz": 3550,
+        "channel_high_mhz": 3570,
+        "bandwidth_mhz": 20,
+        "Ptx": 29,
+        "Gtx": 19.5,
+        "height": 33.53,
+        "downtilt": -1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -78.865206,
+          42.900705
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "type": "real_antenna",
+        "name": "BS4",
+        "azimuth": 143.5,
+        "frequency": 3640.0,
+        "channel_low_mhz": 3630,
+        "channel_high_mhz": 3650,
+        "bandwidth_mhz": 20,
+        "Ptx": 29,
+        "Gtx": 19.5,
+        "height": 33.53,
+        "downtilt": -1
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -78.865206,
+          42.900705
+        ]
+      }
+    }
+  ]
+}

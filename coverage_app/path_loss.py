@@ -1,0 +1,452 @@
+"""
+path_loss.py
+
+This module includes implementations for the supported path loss models.
+"""
+
+import math
+import os
+import csv
+
+import numpy as np
+
+c = 3e8        # Speed of light in m/s
+
+def fspl(d, f_mhz):
+	if d <= 0:
+		return float('inf')
+	f_hz = f_mhz * 1e6
+	return 20 * math.log10((4 * math.pi * d * f_hz) / c)
+
+def alpha_beta_path_loss(d, alpha=123.2, beta=1.2):
+	if d <= 0:
+		return float('inf')
+	return alpha + 10 * beta * math.log10(d)
+
+def eHata_path_loss(distance_km, frequency_mhz, base_height, mobile_height, environment='urban'):
+	"""
+	Okumura–Hata median path loss (Hata 1980, as reproduced in Rappaport's
+	textbook): urban with the large-city mobile-antenna correction, and the
+	suburban correction on top of it.
+
+	Despite the function name and the 'ehata' config key, this is neither the
+	NTIA extended Hata model nor COST-231 Hata (whose frequency term is
+	46.3 + 33.9 log f). Validity: 150–1500 MHz, 1–20 km, h_BS 30–200 m,
+	h_m 1–10 m. At CBRS 3.5 GHz it is used outside its validity; for
+	CBRS deployments use tr38901_path_loss() instead.
+	"""
+	base_height = max(base_height, 30) 
+	mobile_height = 1.5
+	if distance_km <= 0:
+		return float('inf')
+	if environment == 'urban':
+		A = 69.55 + 26.16 * math.log10(frequency_mhz) - 13.82 * math.log10(base_height)
+		B = (44.9 - 6.55 * math.log10(base_height)) * math.log10(distance_km)
+		C = 3.2 * (math.log10(11.75 * mobile_height)) ** 2 - 4.97
+		path_loss = A + B - C
+	elif environment == 'suburban':
+		urban_pl = eHata_path_loss(distance_km, frequency_mhz, base_height, mobile_height, 'urban')
+		correction = 2 * (math.log10(frequency_mhz / 28)) ** 2 + 5.4
+		path_loss = urban_pl - correction
+	else:
+		path_loss = float('inf')
+
+	return path_loss
+
+
+def tr38901_path_loss(d_3d_m, d_2d_m, f_mhz, h_bs, h_ut, scenario='uma'):
+	"""
+	3GPP TR 38.901 Table 7.4.1-1 LoS path-loss model.
+
+	Valid frequency range: 0.5–100 GHz — designed for CBRS 3.5 GHz deployments.
+	Uses the LoS formula only; NLoS attenuation is handled separately by the
+	building diffraction module (Deygout/ITU-R P.526) to avoid double-counting.
+
+	Parameters
+	----------
+	d_3d_m   : float  3D slant distance [m]
+	d_2d_m   : float  2D horizontal distance [m]
+	f_mhz    : float  carrier frequency [MHz]
+	h_bs     : float  BS antenna height above ground [m] (UMa default ≈ 25 m, UMi ≈ 10 m)
+	h_ut     : float  UE antenna height above ground [m] (default ≈ 1.5 m)
+	scenario : str    'uma' → Urban Macro  |  'umi' → Urban Micro (Street Canyon)
+
+	Returns
+	-------
+	float  path loss [dB]
+	"""
+	if d_3d_m <= 0 or d_2d_m <= 0:
+		return float('inf')
+
+	f_ghz = f_mhz / 1000.0
+	f_hz  = f_mhz * 1e6
+
+	# Effective antenna heights (TR 38.901 §7.4.1, outdoor h_E = 1.0 m)
+	h_bs_eff = max(h_bs - 1.0, 0.5)
+	h_ut_eff = max(h_ut - 1.0, 0.5)
+
+	# Breakpoint distance [m]: d_BP' = 4·h_BS'·h_UT'·f_c / c
+	d_bp = 4.0 * h_bs_eff * h_ut_eff * f_hz / c
+
+	if scenario == 'umi':
+		# UMi-Street Canyon — TR 38.901 Table 7.4.1-1, row 2
+		if d_2d_m <= d_bp:
+			return 32.4 + 21.0 * math.log10(d_3d_m) + 20.0 * math.log10(f_ghz)
+		return (32.4 + 40.0 * math.log10(d_3d_m) + 20.0 * math.log10(f_ghz)
+				- 9.5 * math.log10(d_bp ** 2 + (h_bs - h_ut) ** 2))
+	else:
+		# UMa — TR 38.901 Table 7.4.1-1, row 1
+		if d_2d_m <= d_bp:
+			return 28.0 + 22.0 * math.log10(d_3d_m) + 20.0 * math.log10(f_ghz)
+		return (28.0 + 40.0 * math.log10(d_3d_m) + 20.0 * math.log10(f_ghz)
+				- 9.0 * math.log10(d_bp ** 2 + (h_bs - h_ut) ** 2))
+
+def knife_edge_loss_dB(v):
+	"""
+	Additional diffraction loss (dB) for a single knife-edge obstacle.
+
+	Uses Lee's five-region piecewise approximation of the Fresnel-Kirchhoff
+	knife-edge loss, as reproduced in Rappaport's textbook. ITU-R P.526 gives
+	a different, single-expression fit (6.9 + 20 log(...), valid for
+	v > -0.78); only the definition of v is taken from P.526.
+
+	Parameters
+	----------
+	v : float
+	    Fresnel-Kirchhoff diffraction parameter.
+	    v < 0  → obstacle is below the line-of-sight (clear Fresnel zone).
+	    v = 0  → obstacle exactly at LOS level (grazing, ~6 dB loss).
+	    v > 0  → obstacle protrudes above LOS (deep shadow, >6 dB loss).
+
+	Returns
+	-------
+	float
+	    Non-negative additional path loss [dB] beyond free space.
+	"""
+	if v < -1.0:
+		return 0.0
+	elif v <= 0.0:
+		return -20.0 * math.log10(0.5 - 0.62 * v)
+	elif v <= 1.0:
+		return -20.0 * math.log10(0.5 * math.exp(-0.95 * v))
+	elif v <= 2.4:
+		inner = 0.1184 - (0.38 - 0.1 * v) ** 2
+		if inner < 0.0:
+			inner = 0.0
+		val = 0.4 - math.sqrt(inner)
+		if val <= 0.0:
+			return -20.0 * math.log10(0.225 / max(v, 1e-9))
+		return -20.0 * math.log10(val)
+	else:
+		return -20.0 * math.log10(0.225 / v)
+
+
+def compute_acir_db(delta_freq_mhz, channel_bw_mhz=10.0, aclr_db=45.0, acs_db=33.0):
+	"""
+	Compute the Adjacent Channel Interference Ratio (ACIR) in dB for a given
+	frequency separation between an interferer and the victim receiver.
+
+	The ACIR combines transmitter-side spectral leakage (ACLR) and receiver-side
+	selectivity (ACS) into a single suppression factor, following the formula from
+	3GPP TR 36.942 §4.2.3:
+
+	    1/ACIR = 1/ACLR(Δf) + 1/ACS
+
+	In dB:
+	    ACIR_dB = -10 * log10( 10^(-ACLR/10) + 10^(-ACS/10) )
+
+	ACLR is taken from the standard rather than extrapolated: TS 36.104
+	specifies the same 45 dB limit for the first and the second adjacent
+	channel, and no roll-off beyond it. (A previous version of this function
+	assumed ACLR(n) = ACLR_1 + 20*(n-1); that roll-off is not in TR 36.942,
+	and because ACIR saturates on ACS it changed the result by 0.3 dB.)
+
+	Because 10^-4.5 << 10^-ACS/10, the sum is dominated by the ACS term and
+	ACIR ~= ACS: receiver selectivity, not transmitter leakage, sets the
+	coupling. Note the specifications define ACLR (1st and 2nd adjacent) and
+	ACS (adjacent channel) only near the channel; applying them at every
+	offset, as this function does, overstates coupling between widely
+	separated channels.
+
+	Default parameter values (10 MHz channels):
+	    ACLR = 45 dB  →  3GPP TS 36.104 Table 6.6.2.1-2 (BS, unpaired spectrum,
+	                     synchronized operation; 45 dB at 1x and 2x BW offset)
+	    ACS  = 33 dB  →  3GPP TS 36.101 Table 7.5.1-1 (UE; 33 dB up to 10 MHz,
+	                     30 dB at 15 MHz, 27 dB at 20 MHz -- pass acs_db=27
+	                     for 20 MHz channels)
+	    ACIR ≈ 32.7 dB (10 MHz), ≈ 26.9 dB (20 MHz)
+
+	Parameters
+	----------
+	delta_freq_mhz : float
+	    Absolute frequency separation between interferer and victim (MHz).
+	    Must be > 0; returns float('inf') for co-channel (delta == 0).
+	channel_bw_mhz : float
+	    Nominal channel bandwidth (MHz). CBRS default: 10 MHz.
+	aclr_db : float
+	    ACLR of the transmitter (dB), applied at every channel offset.
+	    Default: 45 dB.
+	acs_db : float
+	    Adjacent Channel Selectivity of the receiver (dB). Default: 33 dB.
+
+	Returns
+	-------
+	float
+	    ACIR in dB.  Returns float('inf') when delta_freq_mhz == 0.
+	"""
+	if delta_freq_mhz <= 0.0:
+		return float('inf')  # co-channel – handled separately
+
+	# Combined ACIR:  1/ACIR_lin = 1/ACLR_lin + 1/ACS_lin
+	acir_lin = 1.0 / (10.0 ** (-aclr_db / 10.0) + 10.0 ** (-acs_db / 10.0))
+	return 10.0 * math.log10(acir_lin)
+
+
+def log_distance_path_loss(d, f_mhz, n=4.1, shadowing=False, omni=True):
+	if d <= 0:
+		return float('inf')
+	f = f_mhz * 1e6
+	ld = 20 * math.log10((4 * math.pi * f) / c) + 10 * n * math.log10(d)
+	if shadowing:
+		sigma = 13.15 if omni else 14.74
+		ld += sigma * np.random.randn()
+	return ld
+
+def compute_path_loss(distance_m, frequency_mhz, model='fspl', base_height=None, mobile_height=None,
+					  alpha=123.2, beta=1.2, n=4.1, shadowing=False, omni=True, environment='urban',
+					  distance_2d_m=None, scenario='uma'):
+	"""
+	Wrapper to compute path-loss based on the chosen model.
+
+	'distance_m'    – 3-D slant distance (used by FSPL and TR 38.901).
+	'distance_2d_m' – horizontal ground distance; used by empirical models
+	                  (eHata, alpha-beta, log-distance, TR 38.901 for breakpoint).
+	                  Falls back to distance_m if not supplied.
+	'scenario'      – 'uma' or 'umi', used only when model='tr38901'.
+	"""
+	d_horiz = distance_2d_m if distance_2d_m is not None else distance_m
+
+	if model == 'fspl':
+		return fspl(distance_m, frequency_mhz)
+	elif model == 'alpha_beta':
+		return alpha_beta_path_loss(d_horiz, alpha, beta)
+	elif model == 'ehata':
+		distance_km = d_horiz / 1000.0
+		if base_height is None:
+			base_height = 30
+		if mobile_height is None:
+			mobile_height = 1.5
+		return eHata_path_loss(distance_km, frequency_mhz, base_height, mobile_height, environment)
+	elif model == 'log_distance':
+		return log_distance_path_loss(d_horiz, frequency_mhz, n=n, shadowing=shadowing, omni=omni)
+	elif model == 'tr38901':
+		h_bs = base_height  if base_height  is not None else 25.0
+		h_ut = mobile_height if mobile_height is not None else 1.5
+		return tr38901_path_loss(distance_m, d_horiz, frequency_mhz, h_bs, h_ut, scenario)
+	else:
+		return fspl(distance_m, frequency_mhz)
+
+def choose_path_loss_model():
+	"""
+	Asks user which path-loss model to use and returns all relevant parameters.
+	"""
+	from .cli_utils import _section, _ok, _ask, _ask_float, _warn, RST, BOLD, DIM, CYAN
+
+	_section("Path Loss Model")
+	print(f"    {CYAN}1{RST}  FSPL  {DIM}(default){RST}")
+	print(f"    {CYAN}2{RST}  Alpha-Beta")
+	print(f"    {CYAN}3{RST}  Okumura-Hata  {DIM}(valid 150-1500 MHz — outside its validity at CBRS 3.5 GHz){RST}")
+	print(f"    {CYAN}4{RST}  Log-Distance")
+	print(f"    {CYAN}5{RST}  3GPP TR 38.901  {DIM}(recommended for CBRS 3.5 GHz, valid 0.5–100 GHz){RST}")
+	print()
+	model_choice = _ask("Model [1-5]", default="1").strip()
+
+	if model_choice == '2':
+		path_loss_model = 'alpha_beta'
+	elif model_choice == '3':
+		path_loss_model = 'ehata'
+	elif model_choice == '4':
+		path_loss_model = 'log_distance'
+	elif model_choice == '5':
+		path_loss_model = 'tr38901'
+	else:
+		path_loss_model = 'fspl'
+
+	# Default param values
+	alpha, beta = 123.2, 1.2
+	base_height, mobile_height = None, None
+	environment = 'urban'
+	pl_exp_n = 4.1
+	shadowing = False
+	omni = True
+	scenario = 'uma'
+
+	if path_loss_model == 'ehata':
+		while True:
+			try:
+				mobile_height = _ask_float("UE antenna height (m)", 1.5)
+				if mobile_height < 1:
+					_warn("Mobile height must be >= 1 m.")
+					continue
+				break
+			except ValueError:
+				_warn("Invalid input – please enter a number.")
+		env_ = _ask("Environment (urban / suburban)", default="urban").lower()
+		if env_ in ['urban', 'suburban']:
+			environment = env_
+	elif path_loss_model == 'alpha_beta':
+		alpha = _ask_float("Alpha", 123.2)
+		beta  = _ask_float("Beta",  1.2)
+	elif path_loss_model == 'log_distance':
+		pl_exp_n = _ask_float("Path-loss exponent n", 4.1)
+		shd = _ask("Include shadowing? [y/n]", default="n").lower()
+		if shd.startswith('y'):
+			shadowing = True
+		omn_ = _ask("Omni antenna pattern? [y/n]", default="y").lower()
+		if omn_.startswith('n'):
+			omni = False
+	elif path_loss_model == 'tr38901':
+		scen_ = _ask("Scenario (uma=Urban Macro / umi=Urban Micro)", default="uma").lower()
+		if scen_ in ['umi']:
+			scenario = 'umi'
+		mobile_height = _ask_float("UE antenna height (m)", 1.5)
+		_ok(f"TR 38.901 scenario: {scenario.upper()} — BS height taken from each antenna's height attribute.")
+
+	_ok(f"Path loss model: {path_loss_model}")
+
+	# ------------------------------------------------------------------
+	# Adjacent-Channel Interference (ACI) configuration
+	# ------------------------------------------------------------------
+	# Model: 3GPP TR 36.942 §4.2.3
+	#   1/ACIR = 1/ACLR(Δf) + 1/ACS
+	#   ACLR(n) = ACLR_1 + 20*(n-1) dB  [conservative first-order roll-off]
+	# Defaults (CBRS, 10 MHz channels):
+	#   ACLR_1 = 45 dB  →  3GPP TS 36.104 Table 6.6.1-1
+	#   ACS    = 33 dB  →  3GPP TS 36.101 Table 7.5-1
+	#   ACIR_1 ≈ 32.7 dB
+	# ------------------------------------------------------------------
+	_section("Adjacent Channel Interference (ACI)")
+	print(f"  {DIM}Model: 3GPP TR 36.942 §4.2.3  (1/ACIR = 1/ACLR + 1/ACS){RST}")
+	print(f"  {DIM}Defaults: ACLR₁=45 dB, ACS=33 dB, BW=10 MHz  (CBRS, 3GPP TS 36.104/101){RST}")
+	print()
+	aci_ans = _ask("Enable adjacent-channel interference? [y/n]", default="n").lower()
+	enable_aci = aci_ans.startswith("y")
+
+	aclr_db      = 45.0
+	acs_db       = 33.0
+	channel_bw_mhz = 10.0
+
+	if enable_aci:
+		aclr_db      = _ask_float("First-adjacent ACLR (dB) [3GPP TS 36.104 default: 45]", 45.0)
+		acs_db       = _ask_float("Receiver ACS (dB)        [3GPP TS 36.101 default: 33]", 33.0)
+		channel_bw_mhz = _ask_float("Channel bandwidth (MHz)  [CBRS default: 10]",          10.0)
+		from math import log10
+		acir1 = -10.0 * log10(10.0 ** (-aclr_db / 10.0) + 10.0 ** (-acs_db / 10.0))
+		_ok(f"ACI enabled – ACIR₁ (1st adjacent) ≈ {acir1:.1f} dB")
+
+	return {
+		"model": path_loss_model,
+		"alpha": alpha,
+		"beta": beta,
+		"base_height": base_height,
+		"mobile_height": mobile_height,
+		"environment": environment,
+		"n": pl_exp_n,
+		"shadowing": shadowing,
+		"omni": omni,
+		"scenario": scenario,
+		# ACI parameters
+		"enable_aci":     enable_aci,
+		"aclr_db":        aclr_db,
+		"acs_db":         acs_db,
+		"channel_bw_mhz": channel_bw_mhz,
+	}
+
+
+# ---------------------------------------------------------------------------
+# Antenna radiation patterns (shared by the Coverage App and the Opt Game)
+# ---------------------------------------------------------------------------
+#
+# The horizontal (azimuth) and vertical (elevation) cuts are stored as
+# ``angle_deg, relative_gain_dB`` rows in ``patterns/*.pat``. Each value is the
+# gain *relative to boresight* (<= 0 dB), i.e. the angular roll-off; the
+# absolute gain is obtained by adding the antenna's peak gain G_max.
+#
+# The two cuts are combined with the 3GPP sector-antenna model
+# (TR 36.814 / TR 38.901): the relative attenuations of the two planes are
+# summed and capped at a maximum total attenuation A_max:
+#
+#     A(az, el) = max( A_H(az) + A_V(el),  -A_max )            [dB, <= 0]
+#     G(az, el) = G_max + A(az, el)
+#
+# This module is the single source of truth for antenna gain so the Coverage
+# App and the Opt Game cannot diverge.
+
+# 3GPP TR 36.814 caps the combined H+V attenuation; 30 dB is the standard value.
+ANTENNA_MAX_ATTEN_DB = 30.0
+
+_PATTERN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "patterns")
+_DEFAULT_PATTERNS = None  # lazily-loaded (pattern_h, pattern_v) cache
+
+
+def load_antenna_pattern(path):
+	"""Load a ``.pat`` file into a ``{angle_deg: relative_gain_dB}`` dict.
+
+	Rows are ``angle,gain`` CSV; lines starting with ``//`` are ignored.
+	"""
+	pattern = {}
+	with open(path, mode="r") as f:
+		for row in csv.reader(f, delimiter=","):
+			if row and not row[0].startswith("//"):
+				try:
+					pattern[float(row[0])] = float(row[1])
+				except (ValueError, IndexError):
+					pass
+	return pattern
+
+
+def default_pattern_paths():
+	"""Absolute paths of the bundled horizontal/vertical pattern files."""
+	return (os.path.join(_PATTERN_DIR, "horizontal.pat"),
+	        os.path.join(_PATTERN_DIR, "vertical.pat"))
+
+
+def load_default_patterns():
+	"""Return the bundled ``(pattern_h, pattern_v)``, loaded once and cached."""
+	global _DEFAULT_PATTERNS
+	if _DEFAULT_PATTERNS is None:
+		h_path, v_path = default_pattern_paths()
+		_DEFAULT_PATTERNS = (load_antenna_pattern(h_path), load_antenna_pattern(v_path))
+	return _DEFAULT_PATTERNS
+
+
+def _nearest_pattern_gain(pattern, angle_deg):
+	"""Nearest-neighbour lookup (patterns are tabulated at 1-degree steps)."""
+	return pattern[min(pattern, key=lambda k: abs(k - angle_deg))]
+
+
+def combined_pattern_rolloff_db(az_off_deg, el_off_deg, pattern_h, pattern_v,
+                                a_max=ANTENNA_MAX_ATTEN_DB):
+	"""Combined relative gain (<= 0 dB) of the H and V cuts, 3GPP sum + cap.
+
+	``az_off_deg`` is the azimuth measured from boresight (wrapped to [0,360));
+	``el_off_deg`` is the elevation from boresight including any mechanical
+	downtilt (signed; vertical pattern spans roughly -90..+90 deg).
+	"""
+	a_h = _nearest_pattern_gain(pattern_h, az_off_deg % 360.0)
+	a_v = _nearest_pattern_gain(pattern_v, el_off_deg)
+	return max(a_h + a_v, -abs(a_max))
+
+
+def directional_antenna_gain_db(g_max_dbi, az_off_deg, el_off_deg,
+                                pattern_h=None, pattern_v=None,
+                                a_max=ANTENNA_MAX_ATTEN_DB):
+	"""Absolute directional gain (dBi) = peak gain + combined pattern roll-off.
+
+	When ``pattern_h`` / ``pattern_v`` are omitted the bundled measured
+	patterns are used.
+	"""
+	if pattern_h is None or pattern_v is None:
+		pattern_h, pattern_v = load_default_patterns()
+	return g_max_dbi + combined_pattern_rolloff_db(az_off_deg, el_off_deg,
+	                                               pattern_h, pattern_v, a_max)

@@ -1,0 +1,1282 @@
+"""
+plotting.py
+
+Methods for RSRP/SINR heatmap plotting
+"""
+
+import os
+import math
+import urllib.request
+
+# Set a proper User-Agent to avoid 403 errors from tile servers
+_opener = urllib.request.build_opener()
+_opener.addheaders = [('User-Agent', 'Coverage App / 1.0')]
+urllib.request.install_opener(_opener)
+
+import matplotlib
+import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import contextily as ctx
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+from matplotlib import colormaps
+from matplotlib.colors import to_hex
+
+matplotlib.use('Agg')
+
+# Use a tile provider - OSM.Mapnik works with correct CRS (EPSG:4326)
+# For production use, consider adding a local tile cache to avoid rate limits
+# Configure tile cache to persist across runs and avoid rate limits
+ctx.set_cache_dir(os.path.join(os.path.expanduser("~"), ".cache", "contextily"))
+
+BASEMAP_PROVIDER = ctx.providers.OpenStreetMap.Mapnik
+SHANNON_BANDWIDTH_MHZ = 10.0   # fallback only, for CSVs written before
+                               # bandwidth became an antenna attribute
+BANDWIDTH_COLUMN = "Best Antenna Bandwidth (MHz)"
+
+
+def bandwidth_mhz_of(df, default=SHANNON_BANDWIDTH_MHZ):
+	"""Per-point channel width in MHz, as an array aligned with *df*.
+
+	Falls back to *default* for older result files, which carry no such
+	column, and for any row whose value is missing or non-positive.
+	"""
+	if BANDWIDTH_COLUMN not in df.columns:
+		return np.full(len(df), float(default))
+	bw = pd.to_numeric(df[BANDWIDTH_COLUMN], errors="coerce").to_numpy(dtype=float)
+	return np.where(np.isfinite(bw) & (bw > 0.0), bw, float(default))
+
+def compute_percentile_range(values, low=2, high=98):
+	arr = np.asarray(values, dtype=float)
+	arr = arr[np.isfinite(arr)]
+	if arr.size == 0:
+		return (0.0, 1.0)
+	vmin, vmax = np.nanpercentile(arr, [low, high])
+	if vmin == vmax:
+		vmin -= 1.0
+		vmax += 1.0
+	return (vmin, vmax)
+
+def add_north_arrow(ax, size=0.08):
+	# Simple north arrow in axes coordinates
+	x = 0.07
+	y = 0.92
+	ax.annotate(
+		"N",
+		xy=(x, y), xytext=(x, y - size),
+		xycoords="axes fraction",
+		textcoords="axes fraction",
+		ha="center", va="center",
+		fontsize=10,
+		arrowprops=dict(arrowstyle="-|>", lw=1.2, color="#222")
+	)
+
+def _axes_span_in_meters(ax):
+	minx, maxx = ax.get_xlim()
+	miny, maxy = ax.get_ylim()
+	mid_lat = (miny + maxy) / 2.0
+	meters_per_degree_lon = 111320.0 * math.cos(math.radians(mid_lat))
+	width_m = abs(maxx - minx) * meters_per_degree_lon
+	height_m = abs(maxy - miny) * 111320.0
+	return width_m, height_m
+
+
+def _choose_scale_bar_length(width_m, max_fraction=0.28):
+	target_length = max(width_m * max_fraction, 1.0)
+	nice_lengths = np.array([
+		1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500,
+		1000, 2000, 5000, 10000,
+	], dtype=float)
+	valid = nice_lengths[nice_lengths <= target_length]
+	if valid.size > 0:
+		return float(valid[-1])
+	return float(target_length)
+
+
+def _format_distance_label(length_m):
+	if length_m >= 1000:
+		km_value = length_m / 1000.0
+		if float(km_value).is_integer():
+			return f"{int(km_value)} km"
+		return f"{km_value:.1f} km"
+	return f"{int(round(length_m))} m"
+
+
+def _expand_plot_bounds(min_lat, max_lat, min_lon, max_lon, margin_fraction=0.05, min_margin_m=12.0):
+	"""
+	Expand plot bounds with a relative margin and a small metric floor.
+	This keeps tiny AOIs readable without adding the very large fixed
+	degree-based padding that made small areas look lost in the frame.
+	"""
+	lat_span = max(0.0, float(max_lat) - float(min_lat))
+	lon_span = max(0.0, float(max_lon) - float(min_lon))
+	mid_lat = (float(min_lat) + float(max_lat)) / 2.0
+	meters_per_degree_lon = max(111320.0 * math.cos(math.radians(mid_lat)), 1e-6)
+
+	lat_margin = max(lat_span * margin_fraction, min_margin_m / 111320.0)
+	lon_margin = max(lon_span * margin_fraction, min_margin_m / meters_per_degree_lon)
+
+	return (
+		float(min_lat) - lat_margin,
+		float(max_lat) + lat_margin,
+		float(min_lon) - lon_margin,
+		float(max_lon) + lon_margin,
+	)
+
+
+def add_scale_bar(ax, length_m=None, location=(0.94, 0.075), anchor="right"):
+	"""
+	Draw a compact scale bar anchored in axes coordinates so it stays
+	inside the map frame and away from tick labels.
+	"""
+	width_m, _ = _axes_span_in_meters(ax)
+	if width_m <= 0:
+		return
+
+	if length_m is None:
+		length_m = _choose_scale_bar_length(width_m)
+
+	bar_fraction = min(0.36, max(0.08, length_m / width_m))
+	anchor_x, y0 = location
+	if anchor == "right":
+		x1 = anchor_x
+		x0 = x1 - bar_fraction
+	else:
+		x0 = anchor_x
+		x1 = x0 + bar_fraction
+
+	bg = mpatches.FancyBboxPatch(
+		(x0 - 0.02, y0 - 0.025),
+		bar_fraction + 0.04,
+		0.08,
+		transform=ax.transAxes,
+		boxstyle="round,pad=0.01",
+		facecolor="white",
+		edgecolor="#cbd5e1",
+		alpha=0.88,
+		linewidth=0.8,
+		zorder=6,
+		clip_on=False,
+	)
+	ax.add_patch(bg)
+
+	for xpos in (x0, x1):
+		ax.add_line(mlines.Line2D(
+			[xpos, xpos], [y0 - 0.008, y0 + 0.008],
+			transform=ax.transAxes,
+			color="#222",
+			linewidth=1.5,
+			zorder=7,
+			clip_on=False,
+		))
+	ax.add_line(mlines.Line2D(
+		[x0, x1], [y0, y0],
+		transform=ax.transAxes,
+		color="#222",
+		linewidth=2.2,
+		solid_capstyle="butt",
+		zorder=7,
+		clip_on=False,
+	))
+	ax.text(
+		(x0 + x1) / 2.0,
+		y0 + 0.018,
+		_format_distance_label(length_m),
+		transform=ax.transAxes,
+		ha="center",
+		va="bottom",
+		fontsize=8,
+		color="#222",
+		zorder=8,
+		clip_on=False,
+	)
+
+
+def _plot_antennas_3d(ax, all_antennas, origin_lon, origin_lat, x_range_m, y_range_m):
+	if not all_antennas:
+		return []
+
+	station_groups = {}
+	for ant in all_antennas:
+		key = (
+			round(float(ant["lon"]), 8),
+			round(float(ant["lat"]), 8),
+			ant.get("type", "real"),
+		)
+		group = station_groups.setdefault(key, {
+			"lon": ant["lon"],
+			"lat": ant["lat"],
+			"type": ant.get("type", "real"),
+			"height": 0.0,
+			"building_height_offset": 0.0,
+			"antennas": [],
+		})
+		group["height"] = max(group["height"], float(ant.get("height", 0.0) or 0.0))
+		group["building_height_offset"] = max(
+			group["building_height_offset"],
+			float(ant.get("building_height_offset", 0.0) or 0.0),
+		)
+		group["antennas"].append(ant)
+
+	# High-contrast pole colours: distinct from the viridis MP colormap
+	type_colors = {
+		"real":    "#0d47a1",  # deep cobalt blue
+		"virtual": "#bf360c",  # deep burnt orange
+	}
+	arrow_len     = max(4.0, 0.14 * max(x_range_m, y_range_m))
+	tick_half     = arrow_len * 0.13   # half-width of the 10-m ruler ticks
+	tick_step     = 10.0               # draw a white notch every 10 m
+	label_z_offset = max(2.5, 0.06 * y_range_m)
+	legend_handles = []
+	has_real  = False
+	has_virtual = False
+	real_counter = 0
+	virt_counter = 0
+
+	for station in station_groups.values():
+		x_loc, y_loc = _lonlat_to_local_xy(station["lon"], station["lat"], origin_lon, origin_lat)
+		station_type  = station["type"]
+		color  = type_colors["real" if station_type == "real" else "virtual"]
+		marker = "s" if station_type == "real" else "X"
+		mast_height = max(0.5, float(station["height"]))
+		mast_base   = float(station.get("building_height_offset", 0.0) or 0.0)
+
+		# Sequential label
+		if station_type == "real":
+			real_counter += 1
+			bs_label = f"R{real_counter}"
+		else:
+			virt_counter += 1
+			bs_label = f"V{virt_counter}"
+
+		# ── Ground-anchor diamond: marks the BS footprint at z = 0 ──
+		ax.scatter(
+			[x_loc], [y_loc], [0.0],
+			color=color, marker="D", s=60,
+			edgecolors="white", linewidths=1.0,
+			depthshade=False, zorder=11,
+		)
+
+		# ── Dotted segment from ground to rooftop (only when BS is on a building) ──
+		if mast_base > 0:
+			ax.plot(
+				[x_loc, x_loc], [y_loc, y_loc], [0.0, mast_base],
+				color=color, linewidth=1.2, linestyle="dotted",
+				alpha=0.55, zorder=9,
+			)
+
+		# ── Solid mast segment (rooftop → antenna tip) ──
+		ax.plot(
+			[x_loc, x_loc], [y_loc, y_loc], [mast_base, mast_height],
+			color=color, linewidth=5.0, alpha=1.0,
+			solid_capstyle="round", zorder=10,
+		)
+
+		# ── Ruler: white notch every 10 m along the mast ──
+		h_tick = tick_step
+		while h_tick < mast_height - 0.5:
+			ax.plot(
+				[x_loc - tick_half, x_loc + tick_half],
+				[y_loc, y_loc],
+				[h_tick, h_tick],
+				color="white", linewidth=2.0, zorder=12, alpha=0.95,
+			)
+			h_tick += tick_step
+
+		# ── Tip marker ──
+		ax.scatter(
+			[x_loc], [y_loc], [mast_height],
+			color=color, marker=marker, s=100,
+			edgecolors="white", linewidths=1.5,
+			depthshade=False, zorder=13,
+		)
+
+		# ── Label: white text on solid coloured background ──
+		ax.text(
+			x_loc, y_loc, mast_height + label_z_offset,
+			f"{bs_label}\n{mast_height:.0f} m",
+			fontsize=9.5, fontweight="bold", color="white",
+			ha="center", va="bottom", zorder=16,
+			bbox=dict(
+				boxstyle="round,pad=0.25",
+				facecolor=color,
+				edgecolor="white",
+				linewidth=1.2,
+				alpha=0.96,
+			),
+		)
+
+		for ant in station["antennas"]:
+			azimuth_rad = math.radians(float(ant.get("azimuth", 0.0)))
+			dx = arrow_len * math.sin(azimuth_rad)
+			dy = arrow_len * math.cos(azimuth_rad)
+			ax.quiver(
+				x_loc, y_loc, mast_height,
+				dx, dy, 0.0,
+				color=color, linewidth=1.8,
+				arrow_length_ratio=0.22,
+				normalize=False, zorder=11,
+			)
+
+		if station_type == "real":
+			has_real = True
+		else:
+			has_virtual = True
+
+	if has_real:
+		legend_handles.append(
+			mlines.Line2D([], [], color="#0d47a1", marker="s", linestyle="-",
+						 markersize=6, linewidth=2.0,
+						 label="Real BS (R1, R2, …) mast + azimuth\n(white notches = 10 m intervals)")
+		)
+	if has_virtual:
+		legend_handles.append(
+			mlines.Line2D([], [], color="#bf360c", marker="X", linestyle="-",
+						 markersize=6, linewidth=2.0,
+						 label="Virtual BS (V1, V2, …) mast + azimuth\n(white notches = 10 m intervals)")
+		)
+
+	return legend_handles
+
+# 3GPP-standard thresholds for the colorbar quality labels.
+# RSRP (dBm): Excellent ≥ -80, Good ≥ -90, Fair ≥ -100, Poor < -110
+# SINR  (dB): Excellent ≥ 20,  Good ≥ 13,  Fair ≥ 0,    Poor < -3
+_QUALITY_THRESHOLDS = {
+	"RSRP (dBm)": [
+		(-80,  "Excellent (≥ -80 dBm)"),
+		(-90,  "Good (≥ -90 dBm)"),
+		(-100, "Fair (≥ -100 dBm)"),
+		(-110, "Poor (≥ -110 dBm)"),
+	],
+	"SINR (dB)": [
+		(20, "Excellent (≥ 20 dB)"),
+		(13, "Good (≥ 13 dB)"),
+		(0,  "Fair (≥ 0 dB)"),
+		(-3, "Poor (≥ -3 dB)"),
+	],
+	"Average SINR (dB)": [
+		(20, "Excellent (≥ 20 dB)"),
+		(13, "Good (≥ 13 dB)"),
+		(0,  "Fair (≥ 0 dB)"),
+		(-3, "Poor (≥ -3 dB)"),
+	],
+}
+
+def _annotate_colorbar_quality_lines(cbar, mappable, label, threshold_text_x=1.18, draw_text=True):
+	thresholds = _QUALITY_THRESHOLDS.get(label, [])
+	if not thresholds:
+		return
+
+	vmin, vmax = mappable.get_clim()
+	y_transform = cbar.ax.get_yaxis_transform()
+	for value, text in thresholds:
+		if vmin <= value <= vmax:
+			cbar.ax.axhline(value, color="white", lw=0.8, linestyle="--", alpha=0.8)
+			if draw_text:
+				cbar.ax.text(
+					threshold_text_x,
+					value,
+					text,
+					va="center",
+					ha="left",
+					fontsize=7,
+					transform=y_transform,
+					color="#333",
+					clip_on=False,
+				)
+
+
+def add_side_colorbar(fig, ax, mappable, label, size="4.5%", pad=0.18, threshold_text_x=1.18):
+	"""
+	Add a colorbar to the right of *ax* with 3GPP-standard quality
+	threshold lines (RSRP or SINR). The colorbar is appended through an
+	axes divider so it gets dedicated space instead of drawing over the map.
+	"""
+	divider = make_axes_locatable(ax)
+	cax = divider.append_axes("right", size=size, pad=pad)
+	cbar = fig.colorbar(mappable, cax=cax, orientation="vertical")
+	cbar.ax.yaxis.set_ticks_position("left")
+	cbar.ax.yaxis.set_label_position("left")
+	cbar.ax.tick_params(labelsize=8)
+	cbar.set_label(label, size=9, labelpad=6)
+	_annotate_colorbar_quality_lines(
+		cbar,
+		mappable,
+		label,
+		threshold_text_x=threshold_text_x,
+		draw_text=True,
+	)
+	return cbar
+
+
+def add_inset_colorbar(ax, mappable, label, width="3.6%", height="52%", loc="upper right", borderpad=0.9):
+	"""
+	Draw a compact inset colorbar inside the map axes to keep the map itself
+	dominant in the exported image for small AOIs.
+	"""
+	cax = inset_axes(ax, width=width, height=height, loc=loc, borderpad=borderpad)
+	cax.set_facecolor((1.0, 1.0, 1.0, 0.85))
+	cbar = plt.colorbar(mappable, cax=cax, orientation="vertical")
+	cbar.ax.tick_params(labelsize=7)
+	cbar.ax.set_title("Avg\nSINR", fontsize=7, pad=4)
+	_annotate_colorbar_quality_lines(cbar, mappable, label, draw_text=False)
+	return cbar
+
+def build_freq_color_maps(real_antennas, virtual_antennas):
+	"""
+	Build color maps for real and virtual antennas based on frequencies.
+	"""
+	real_freqs = sorted({ant["frequency"] for ant in real_antennas})
+	virt_freqs = sorted({ant["frequency"] for ant in virtual_antennas})
+
+	blues = colormaps["Blues"]
+	rdpu = colormaps["RdPu"]
+
+	real_color_map = {}
+	for i, freq in enumerate(real_freqs):
+		frac = (i + 1) / (len(real_freqs) + 1)
+		color_ = blues(frac)
+		real_color_map[freq] = to_hex(color_)
+
+	virtual_color_map = {}
+	for i, freq in enumerate(virt_freqs):
+		frac = (i + 1) / (len(virt_freqs) + 1)
+		color_ = rdpu(frac)
+		virtual_color_map[freq] = to_hex(color_)
+
+	return real_color_map, virtual_color_map
+
+def add_antenna_arrows(
+	ax,
+	all_antennas,
+	bounding_box,
+	freq_color_map_real,
+	freq_color_map_virtual,
+	arrow_scale_factor=0.08,
+	arrow_mutation_scale=12,
+):
+	"""
+	Draw antennas as scatter + arrow annotation in the map.
+	Returns sets of frequencies actually drawn (for legend).
+	"""
+	min_lat, max_lat, min_lon, max_lon = bounding_box
+	d_lat = max_lat - min_lat
+	d_lon = max_lon - min_lon
+	arrow_scale = arrow_scale_factor * max(d_lat, d_lon)
+
+	real_drawn_freqs = set()
+	virt_drawn_freqs = set()
+
+	for ant in all_antennas:
+		lat = ant["lat"]
+		lon = ant["lon"]
+		if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
+			continue
+		freq_ = ant["frequency"]
+		typ_ = ant.get("type", "real")
+		if typ_ == "real":
+			color_ = freq_color_map_real.get(freq_, "#0000FF")
+			marker_shape = "s"
+			real_drawn_freqs.add(freq_)
+		else:
+			color_ = freq_color_map_virtual.get(freq_, "#FF00FF")
+			marker_shape = "X"
+			virt_drawn_freqs.add(freq_)
+
+		ax.scatter(lon, lat, color=color_, marker=marker_shape, s=70,
+				   edgecolors="black", linewidths=0.8, zorder=5)
+
+		az_deg = ant["azimuth"]
+		az_rad = math.radians(az_deg)
+		lon_scale_factor = math.cos(math.radians(float(lat)))  # Accounts for longitude compression
+		'''
+		Longitude gets compressed as it gets father away form the equator by a factor of cos(latitude). 
+		To consider this compression we divide by cos(latitude) when computing our end point for longitude
+		'''
+		end_lat = float(lat) + float(arrow_scale) * float(math.cos(az_rad))
+		end_lon = float(lon) + (float(arrow_scale) * float(math.sin(az_rad)) / lon_scale_factor)
+
+		ax.annotate(
+			"",
+			xy=(end_lon, end_lat),
+			xytext=(lon, lat),
+			arrowprops=dict(
+				arrowstyle="simple",
+				fc=color_,
+				ec="black",
+				lw=0.5,
+				shrinkA=0,
+				shrinkB=0,
+				mutation_scale=arrow_mutation_scale
+			),
+			zorder=6
+		)
+	return real_drawn_freqs, virt_drawn_freqs
+
+def build_legend(
+	ax,
+	freq_color_map_real,
+	freq_color_map_virtual,
+	real_shown_freqs,
+	virt_shown_freqs,
+	inside_axes=False,
+):
+	"""
+	Construct a legend showing real/virtual frequencies in the plot.
+	"""
+	legend_handles = []
+
+	for freq_ in sorted(freq_color_map_real.keys()):
+		if freq_ in real_shown_freqs:
+			line = mlines.Line2D(
+				[], [], color=freq_color_map_real[freq_], marker='s', linestyle='None',
+				markersize=10, label=f"Real Antenna at {freq_:.1f} MHz"
+			)
+			legend_handles.append(line)
+
+	for freq_ in sorted(freq_color_map_virtual.keys()):
+		if freq_ in virt_shown_freqs:
+			line = mlines.Line2D(
+				[], [], color=freq_color_map_virtual[freq_], marker='X', linestyle='None',
+				markersize=10, label=f"Virtual Antenna at {freq_:.1f} MHz"
+			)
+			legend_handles.append(line)
+
+	if legend_handles:
+		if inside_axes:
+			ncols = 1 if len(legend_handles) <= 2 else 2
+			legend = ax.legend(
+				handles=legend_handles,
+				loc="lower left",
+				bbox_to_anchor=(0.015, 0.02),
+				ncol=ncols,
+				frameon=True,
+				framealpha=0.92,
+				facecolor="white",
+				fontsize=7.5,
+				borderaxespad=0,
+			)
+		else:
+			ncols = max(1, len(legend_handles) // 3 + (1 if len(legend_handles) % 3 else 0))
+			legend = ax.legend(
+				handles=legend_handles,
+				loc="upper center",
+				bbox_to_anchor=(0.5, -0.22),
+				ncol=ncols,
+				frameon=True,
+				framealpha=0.9,
+				facecolor="white",
+				fontsize=8,
+				borderaxespad=0,
+			)
+		return legend
+
+def _lonlat_to_local_xy(lon, lat, origin_lon, origin_lat):
+	meters_per_lon_degree = 111320.0 * math.cos(math.radians(origin_lat))
+	x = (lon - origin_lon) * meters_per_lon_degree
+	y = (lat - origin_lat) * 111320.0
+	return x, y
+
+def _polygon_to_local_xy(polygon, origin_lon, origin_lat):
+	return [_lonlat_to_local_xy(lon, lat, origin_lon, origin_lat) for lon, lat in polygon.exterior.coords]
+
+def _add_polygon_face_3d(ax, polygon, origin_lon, origin_lat, z_value, facecolor, edgecolor, alpha):
+	coords = _polygon_to_local_xy(polygon, origin_lon, origin_lat)
+	if len(coords) < 3:
+		return
+	face = [[(x, y, z_value) for x, y in coords]]
+	collection = Poly3DCollection(face, facecolors=facecolor, edgecolors=edgecolor,
+		linewidths=0.35, alpha=alpha)
+	ax.add_collection3d(collection)
+
+	closed_coords = coords if coords[0] == coords[-1] else coords + [coords[0]]
+	xs = [xy[0] for xy in closed_coords]
+	ys = [xy[1] for xy in closed_coords]
+	zs = [z_value] * len(closed_coords)
+	ax.plot(xs, ys, zs, color=edgecolor, linewidth=0.45, alpha=min(1.0, alpha + 0.2))
+
+def _add_extruded_polygon_3d(ax, polygon, origin_lon, origin_lat, height, facecolor, edgecolor, alpha):
+	coords = _polygon_to_local_xy(polygon, origin_lon, origin_lat)
+	if len(coords) < 3:
+		return
+
+	closed_coords = coords if coords[0] == coords[-1] else coords + [coords[0]]
+	if height <= 0:
+		_add_polygon_face_3d(ax, polygon, origin_lon, origin_lat, 0.0, facecolor, edgecolor, alpha)
+		return
+
+	top_face = [[(x, y, height) for x, y in closed_coords]]
+	side_faces = []
+	for idx in range(len(closed_coords) - 1):
+		x1, y1 = closed_coords[idx]
+		x2, y2 = closed_coords[idx + 1]
+		side_faces.append([
+			(x1, y1, 0.0),
+			(x2, y2, 0.0),
+			(x2, y2, height),
+			(x1, y1, height),
+		])
+
+	faces = top_face + side_faces
+	collection = Poly3DCollection(faces, facecolors=facecolor, edgecolors=edgecolor,
+		linewidths=0.35, alpha=alpha)
+	ax.add_collection3d(collection)
+
+	xs = [xy[0] for xy in closed_coords]
+	ys = [xy[1] for xy in closed_coords]
+	ax.plot(xs, ys, [0.0] * len(closed_coords), color=edgecolor, linewidth=0.35, alpha=0.45)
+	ax.plot(xs, ys, [height] * len(closed_coords), color=edgecolor, linewidth=0.45, alpha=0.75)
+
+def get_plot_bounding_box(gdf_polygon, df_points):
+	"""
+	Determines bounding box for polygons + coverage points.
+	"""
+	lat_vals = df_points["Latitude"].values
+	lon_vals = df_points["Longitude"].values
+	min_lat = np.min(lat_vals)
+	max_lat = np.max(lat_vals)
+	min_lon = np.min(lon_vals)
+	max_lon = np.max(lon_vals)
+
+	if len(gdf_polygon) > 0:
+		pminx, pminy, pmaxx, pmaxy = gdf_polygon.iloc[0].geometry.bounds
+		min_lat = min(min_lat, pminy)
+		max_lat = max(max_lat, pmaxy)
+		min_lon = min(min_lon, pminx)
+		max_lon = max(max_lon, pmaxx)
+
+	return _expand_plot_bounds(min_lat, max_lat, min_lon, max_lon)
+
+def plot_polygon_outline(ax, gdf_polygon):
+	if len(gdf_polygon) > 0:
+		gdf_polygon.plot(ax=ax, color="none", edgecolor="black", linewidth=1, zorder=4)
+
+def add_basemap(ax):
+	xlim = ax.get_xlim()
+	ylim = ax.get_ylim()
+	try:
+		ctx.add_basemap(ax, headers={"User-Agent": "SHARP/1.0 (bobfrenc@buffalo.edu)"}, crs="EPSG:4326")
+	except Exception as exc:
+		print(f"[Warning] Basemap unavailable: {exc}")
+	finally:
+		ax.set_xlim(xlim)
+		ax.set_ylim(ylim)
+
+def plot_best_rsrp_heatmap(output_folder, polygon_gdf, real_antennas, virtual_antennas, title_suffix="", csv_path=None):
+	"""
+	Plot all coverage points color-coded by best RSRP.
+	If 'csv_path' is None, uses 'best_data.csv' from 'output_folder'.
+	"""
+	if csv_path is None:
+		csv_path = os.path.join(output_folder, "best_data.csv")
+
+	if not os.path.isfile(csv_path):
+		print(f"[Warning] No {csv_path} found for RSRP plot.")
+		return
+
+	df = pd.read_csv(csv_path)
+	if df.empty:
+		print(f"[Warning] {csv_path} is empty, skipping RSRP plot.")
+		return
+
+	fig, ax = plt.subplots(figsize=(8, 6.5))
+	ax.set_title(f"Best RSRP (dBm) Heatmap {title_suffix}", fontsize=13, pad=12)
+
+	vmin, vmax = compute_percentile_range(df["Best Antenna RSRP (dBm)"].values)
+
+	sc = ax.scatter(df["Longitude"], df["Latitude"], 
+		c=df["Best Antenna RSRP (dBm)"],
+		cmap="viridis",
+		vmin=vmin, vmax=vmax,
+		alpha=0.75, s=10,
+		edgecolors="none",
+		zorder=3
+	)
+
+	plot_polygon_outline(ax, polygon_gdf)
+	min_lat, max_lat, min_lon, max_lon = get_plot_bounding_box(polygon_gdf, df)
+	ax.set_xlim([min_lon, max_lon])
+	ax.set_ylim([min_lat, max_lat])
+	ax.tick_params(axis='x', labelrotation=45)
+	add_basemap(ax)
+	ax.set_xlabel("Longitude")
+	ax.set_ylabel("Latitude")
+	ax.xaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.yaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+	ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+
+	real_map, virt_map = build_freq_color_maps(real_antennas, virtual_antennas)
+	all_ants = real_antennas + virtual_antennas
+	real_drawn, virt_drawn = add_antenna_arrows(
+		ax, all_ants, (min_lat, max_lat, min_lon, max_lon),
+		freq_color_map_real=real_map,
+		freq_color_map_virtual=virt_map
+	)
+	build_legend(ax, real_map, virt_map, real_drawn, virt_drawn)
+	add_side_colorbar(fig, ax, sc, "RSRP (dBm)")
+
+	add_north_arrow(ax)
+	add_scale_bar(ax)
+
+	out_rsrp = os.path.join(output_folder, f"best_rsrp_heatmap{title_suffix}.png")
+	plt.savefig(out_rsrp, dpi=300, bbox_inches='tight', pad_inches=0.1)
+	plt.close()
+
+def plot_best_sinr_heatmap(output_folder, polygon_gdf, real_antennas, virtual_antennas, title_suffix="", csv_path=None):
+	"""
+	Plot all coverage points color-coded by best SINR.
+	If 'csv_path' is None, uses 'best_data.csv' from 'output_folder'.
+	"""
+	if csv_path is None:
+		csv_path = os.path.join(output_folder, "best_data.csv")
+
+	if not os.path.isfile(csv_path):
+		print(f"[Warning] No {csv_path} found for SINR plot.")
+		return
+	df = pd.read_csv(csv_path)
+	if df.empty:
+		print(f"[Warning] {csv_path} is empty, skipping SINR plot.")
+		return
+
+	fig, ax = plt.subplots(figsize=(8, 6.5))
+	ax.set_title(f"Best SINR (dB) Heatmap {title_suffix}", fontsize=13, pad=12)
+
+	vmin, vmax = compute_percentile_range(df["Best Antenna SINR (dB)"].values)
+
+	sc = ax.scatter(df["Longitude"], df["Latitude"],
+		c=df["Best Antenna SINR (dB)"],
+		cmap="viridis",
+		vmin=vmin, vmax=vmax,
+		alpha=0.75, s=10,
+		edgecolors="none",
+		zorder=3
+	)
+
+	plot_polygon_outline(ax, polygon_gdf)
+	min_lat, max_lat, min_lon, max_lon = get_plot_bounding_box(polygon_gdf, df)
+	ax.set_xlim([min_lon, max_lon])
+	ax.set_ylim([min_lat, max_lat])
+	ax.tick_params(axis='x', labelrotation=45)
+	add_basemap(ax)
+	ax.set_xlabel("Longitude")
+	ax.set_ylabel("Latitude")
+	ax.xaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.yaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+	ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+
+	real_map, virt_map = build_freq_color_maps(real_antennas, virtual_antennas)
+	all_ants = real_antennas + virtual_antennas
+	real_drawn, virt_drawn = add_antenna_arrows(
+		ax, all_ants, (min_lat, max_lat, min_lon, max_lon),
+		freq_color_map_real=real_map,
+		freq_color_map_virtual=virt_map
+	)
+	build_legend(ax, real_map, virt_map, real_drawn, virt_drawn)
+	add_side_colorbar(fig, ax, sc, "SINR (dB)")
+
+	add_north_arrow(ax)
+	add_scale_bar(ax)
+
+	out_sinr = os.path.join(output_folder, f"best_sinr_heatmap{title_suffix}.png")
+	plt.savefig(out_sinr, dpi=300, bbox_inches='tight', pad_inches=0.1)
+	plt.close()
+
+def plot_best_throughput_heatmap(output_folder, polygon_gdf, real_antennas, virtual_antennas, title_suffix="", csv_path=None):
+	"""
+	Plot all coverage points color-coded by estimated throughput in Mbps.
+	Throughput is computed from SINR using Shannon capacity over the
+	channel each point was actually served on: C = B * log2(1 + SINR).
+	"""
+	if csv_path is None:
+		csv_path = os.path.join(output_folder, "best_data.csv")
+
+	if not os.path.isfile(csv_path):
+		print(f"[Warning] No {csv_path} found for throughput plot.")
+		return
+	df = pd.read_csv(csv_path)
+	if df.empty:
+		print(f"[Warning] {csv_path} is empty, skipping throughput plot.")
+		return
+
+	sinr_db = df["Best Antenna SINR (dB)"].to_numpy(dtype=float)
+	throughput_mbps = np.full_like(sinr_db, np.nan, dtype=float)
+	valid_mask = np.isfinite(sinr_db) & (sinr_db > -999)
+	if not np.any(valid_mask):
+		print(f"[Warning] {csv_path} has no valid SINR values for throughput plot.")
+		return
+	sinr_lin = np.power(10.0, sinr_db[valid_mask] / 10.0)
+	bw_mhz = bandwidth_mhz_of(df)[valid_mask]
+	throughput_mbps[valid_mask] = bw_mhz * np.log2(1.0 + np.maximum(sinr_lin, 0.0))
+
+	fig, ax = plt.subplots(figsize=(8, 6.5))
+	ax.set_title(f"Best Throughput (Mbps) Heatmap {title_suffix}", fontsize=13, pad=12)
+
+	vmin, vmax = compute_percentile_range(throughput_mbps)
+
+	sc = ax.scatter(df["Longitude"], df["Latitude"],
+		c=throughput_mbps,
+		cmap="viridis",
+		vmin=vmin, vmax=vmax,
+		alpha=0.75, s=10,
+		edgecolors="none",
+		zorder=3
+	)
+
+	plot_polygon_outline(ax, polygon_gdf)
+	min_lat, max_lat, min_lon, max_lon = get_plot_bounding_box(polygon_gdf, df)
+	ax.set_xlim([min_lon, max_lon])
+	ax.set_ylim([min_lat, max_lat])
+	ax.tick_params(axis='x', labelrotation=45)
+	add_basemap(ax)
+	ax.set_xlabel("Longitude")
+	ax.set_ylabel("Latitude")
+	ax.xaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.yaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+	ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+
+	real_map, virt_map = build_freq_color_maps(real_antennas, virtual_antennas)
+	all_ants = real_antennas + virtual_antennas
+	real_drawn, virt_drawn = add_antenna_arrows(
+		ax, all_ants, (min_lat, max_lat, min_lon, max_lon),
+		freq_color_map_real=real_map,
+		freq_color_map_virtual=virt_map
+	)
+	build_legend(ax, real_map, virt_map, real_drawn, virt_drawn)
+	add_side_colorbar(fig, ax, sc, "Throughput (Mbps)")
+
+	add_north_arrow(ax)
+	add_scale_bar(ax)
+
+	out_thr = os.path.join(output_folder, f"best_throughput_heatmap{title_suffix}.png")
+	plt.savefig(out_thr, dpi=300, bbox_inches='tight', pad_inches=0.1)
+	plt.close()
+
+def plot_measurement_points_3d(output_folder, polygon_gdf, spike_points, known_height_buildings,
+							   missing_height_buildings, ue_height=1.5, title_suffix="", all_antennas=None):
+	"""
+	3-D plot of measurement points (MPs) over the AOI.
+
+	* MPs on buildings WITH usable height → vertical spike from z=0 to
+	  z=building_height + ue_height, bright-coloured marker at the tip.
+	* MPs on buildings WITHOUT usable height → small orange dot at z=ue_height.
+	* MPs off buildings → tiny grey dot at z=ue_height.
+	* Building footprints are drawn as semi-transparent outlines so the
+	  spikes read clearly against their context.
+	"""
+	os.makedirs(output_folder, exist_ok=True)
+
+	all_geoms = []
+	all_geoms.extend(building["geometry"] for building in known_height_buildings)
+	all_geoms.extend(missing_height_buildings)
+	if len(polygon_gdf) > 0:
+		all_geoms.extend(list(polygon_gdf.geometry))
+	if not all_geoms:
+		return None
+
+	bounds_list = [geom.bounds for geom in all_geoms if not geom.is_empty]
+	minx = min(b[0] for b in bounds_list)
+	miny = min(b[1] for b in bounds_list)
+	maxx = max(b[2] for b in bounds_list)
+	maxy = max(b[3] for b in bounds_list)
+	origin_lon = (minx + maxx) / 2.0
+	origin_lat = (miny + maxy) / 2.0
+
+	# ── colour map for spike heights ───────────────────────────────────────
+	spike_data = [pt for pt in spike_points if pt["status"] == "on_building_with_height"]
+	spike_heights = [pt["height"] + ue_height for pt in spike_data]
+	if spike_heights:
+		h_min = min(spike_heights)
+		h_max = max(spike_heights)
+		norm = matplotlib.colors.Normalize(vmin=h_min, vmax=h_max)
+		spike_cmap = colormaps["plasma"]
+	else:
+		norm = None
+		spike_cmap = None
+
+	# ── max z for axis limits ───────────────────────────────────────────────
+	building_heights = [building["height"] for building in known_height_buildings]
+	antenna_heights = [float(ant.get("height", 0.0) or 0.0) for ant in (all_antennas or [])]
+	z_top = max(
+		5.0,
+		(max(spike_heights) if spike_heights else 0.0) * 1.20,
+		(max(building_heights) if building_heights else 0.0) * 1.10 + ue_height,
+		(max(antenna_heights) if antenna_heights else 0.0) * 1.15,
+	)
+
+	fig = plt.figure(figsize=(13, 9))
+	ax = fig.add_subplot(111, projection="3d")
+	fig.patch.set_facecolor("white")
+	ax.set_facecolor("#f0f4f8")
+
+	# ── AOI boundary ────────────────────────────────────────────────────────
+	if len(polygon_gdf) > 0:
+		for geom in polygon_gdf.geometry:
+			if geom.is_empty:
+				continue
+			geoms = [geom] if geom.geom_type == "Polygon" else list(geom.geoms)
+			for poly in geoms:
+				coords = _polygon_to_local_xy(poly, origin_lon, origin_lat)
+				closed = coords if coords[0] == coords[-1] else coords + [coords[0]]
+				ax.plot([c[0] for c in closed], [c[1] for c in closed],
+						[0.0] * len(closed), color="#0f172a", linewidth=1.4, alpha=0.9, zorder=5)
+
+	# ── building footprints without height (flat outlines) ─────────────────
+	for poly in missing_height_buildings:
+		_add_polygon_face_3d(ax, poly, origin_lon, origin_lat, 0.0, "#e2e8f0", "#94a3b8", 0.30)
+
+	# ── building footprints with height (translucent extruded boxes) ────────
+	for building in known_height_buildings:
+		_add_extruded_polygon_3d(
+			ax, building["geometry"], origin_lon, origin_lat,
+			building["height"], "#bfdbfe", "#3b82f6", 0.18,
+		)
+
+	# ── off-building MPs (grey dots at ue_height) ────────────────────────
+	off_pts = [pt for pt in spike_points if pt["status"] == "off_building"]
+	if off_pts:
+		xs = []; ys = []
+		for pt in off_pts:
+			x_loc, y_loc = _lonlat_to_local_xy(pt["lon"], pt["lat"], origin_lon, origin_lat)
+			xs.append(x_loc); ys.append(y_loc)
+		ax.scatter(xs, ys, [ue_height] * len(xs), color="#94a3b8", s=3, alpha=0.45,
+				   depthshade=False, zorder=3)
+
+	# ── on-building MPs without height (orange dot at ue_height) ─────────────────
+	no_ht_pts = [pt for pt in spike_points if pt["status"] == "on_building_no_height"]
+	if no_ht_pts:
+		xs = []; ys = []
+		for pt in no_ht_pts:
+			x_loc, y_loc = _lonlat_to_local_xy(pt["lon"], pt["lat"], origin_lon, origin_lat)
+			xs.append(x_loc); ys.append(y_loc)
+		ax.scatter(xs, ys, [ue_height] * len(xs), color="#f97316", s=8, alpha=0.70,
+				   depthshade=False, zorder=6, marker="x")
+
+	# ── spikes for MPs on buildings with known height ───────────────────────
+	for pt, ht_total in zip(spike_data, spike_heights):
+		x_loc, y_loc = _lonlat_to_local_xy(pt["lon"], pt["lat"], origin_lon, origin_lat)
+		if norm is not None and spike_cmap is not None:
+			color = to_hex(spike_cmap(norm(ht_total)))
+		else:
+			color = "#16a34a"
+		# stem
+		ax.plot([x_loc, x_loc], [y_loc, y_loc], [0.0, ht_total],
+				color=color, linewidth=1.4, alpha=0.90, zorder=8)
+		# tip marker
+		ax.scatter([x_loc], [y_loc], [ht_total], color=color, s=18,
+				   depthshade=False, zorder=9)
+
+	# ── axis limits ──────────────────────────────────────────────────────────
+	min_x_m, min_y_m = _lonlat_to_local_xy(minx, miny, origin_lon, origin_lat)
+	max_x_m, max_y_m = _lonlat_to_local_xy(maxx, maxy, origin_lon, origin_lat)
+	ax.set_xlim(min(min_x_m, max_x_m), max(min_x_m, max_x_m))
+	ax.set_ylim(min(min_y_m, max_y_m), max(min_y_m, max_y_m))
+	ax.set_zlim(0.0, z_top)
+	ax.set_xlabel("Easting (m)", labelpad=10)
+	ax.set_ylabel("Northing (m)", labelpad=10)
+	ax.set_zlabel("Height (m)", labelpad=8)
+	ax.view_init(elev=30, azim=-55)
+	x_range = abs(max_x_m - min_x_m)
+	y_range = abs(max_y_m - min_y_m)
+	ax.set_box_aspect((max(1.0, x_range), max(1.0, y_range), max(5.0, z_top)))
+	antenna_legend_handles = _plot_antennas_3d(ax, all_antennas, origin_lon, origin_lat, x_range, y_range)
+
+	# ── colourbar for spike heights ──────────────────────────────────────────
+	if spike_cmap is not None and norm is not None and spike_data:
+		sm = matplotlib.cm.ScalarMappable(cmap=spike_cmap, norm=norm)
+		sm.set_array([])
+		cbar = fig.colorbar(sm, ax=ax, shrink=0.45, pad=0.10, aspect=18)
+		cbar.set_label("MP height (building + UE) (m)", fontsize=9)
+		cbar.ax.tick_params(labelsize=8)
+
+	# ── legend ───────────────────────────────────────────────────────────────
+	legend_handles = [
+		mpatches.Patch(facecolor="#e2e8f0", edgecolor="#94a3b8",
+					   label="Building footprint (no height data)"),
+		mpatches.Patch(facecolor="#bfdbfe", edgecolor="#3b82f6",
+					   label="Building with usable height"),
+		mlines.Line2D([], [], color="#94a3b8", marker="o", linestyle="None",
+					  markersize=4, label=f"MP off building (z = {ue_height:.1f} m)"),
+		mlines.Line2D([], [], color="#f97316", marker="x", linestyle="None",
+					  markersize=6, label=f"MP on building, height unknown (z = {ue_height:.1f} m)"),
+		mlines.Line2D([], [], color="#16a34a", linewidth=1.5,
+					  label="MP on building — spike = bldg + UE height"),
+	]
+	legend_handles.extend(antenna_legend_handles)
+	ax.legend(handles=legend_handles, loc="upper left",
+			  bbox_to_anchor=(0.01, 0.99), fontsize=8, framealpha=0.92)
+
+	# ── stats box ────────────────────────────────────────────────────────────
+	n_spike = len(spike_data)
+	n_no_ht = len(no_ht_pts)
+	n_off = len(off_pts)
+	n_total = n_spike + n_no_ht + n_off
+	stats = [
+		f"Total MPs: {n_total}",
+		f"Spikes (known height): {n_spike}",
+		f"On building, height unknown: {n_no_ht}",
+		f"Off building: {n_off}",
+	]
+	if spike_heights:
+		stats += [
+			f"Min MP height: {min(spike_heights):.1f} m",
+			f"Max MP height: {max(spike_heights):.1f} m",
+			f"Median: {float(np.median(spike_heights)):.1f} m",
+			f"UE height offset: {ue_height:.1f} m",
+		]
+	ax.text2D(
+		0.01, 0.62,
+		"\n".join(stats),
+		transform=ax.transAxes,
+		fontsize=7.5,
+		bbox=dict(boxstyle="round,pad=0.3", facecolor="white",
+				  edgecolor="#cbd5e1", alpha=0.92),
+	)
+
+	ax.set_title(f"Measurement Point Heights — AOI 3D View{title_suffix}",
+				 fontsize=12, pad=14)
+	outpath = os.path.join(output_folder, f"mp_heights_3d{title_suffix}.png")
+	plt.savefig(outpath, dpi=300, bbox_inches="tight", pad_inches=0.15)
+	plt.close(fig)
+	return outpath
+
+
+def plot_grid_based_sinr_heatmap(output_folder, polygon_gdf, real_antennas, virtual_antennas, granularity=50, 
+								 title_suffix="", csv_path=None):
+	"""
+	Builds a coarse grid and computes average SINR in each grid cell,
+	then plots a heatmap of mean SINR values.
+	If 'csv_path' is None, uses 'best_data.csv' from 'output_folder'.
+	"""
+	if csv_path is None:
+		csv_path = os.path.join(output_folder, "best_data.csv")
+
+	if not os.path.isfile(csv_path):
+		print(f"[Warning] No {csv_path} found for grid-based SINR plot.")
+		return
+	df = pd.read_csv(csv_path)
+	if df.empty:
+		print(f"[Warning] {csv_path} is empty, skipping grid-based SINR plot.")
+		return
+
+	if len(polygon_gdf) > 0:
+		pminx, pminy, pmaxx, pmaxy = polygon_gdf.iloc[0].geometry.bounds
+		min_lon, min_lat, max_lon, max_lat = pminx, pminy, pmaxx, pmaxy
+	else:
+		min_lat, max_lat, min_lon, max_lon = get_plot_bounding_box(polygon_gdf, df)
+
+	lat_bins = np.linspace(min_lat, max_lat, granularity + 1)
+	lon_bins = np.linspace(min_lon, max_lon, granularity + 1)
+
+	lat_vals = df["Latitude"].values
+	lon_vals = df["Longitude"].values
+	sinr_vals = df["Best Antenna SINR (dB)"].values
+
+	lat_inds = np.digitize(lat_vals, lat_bins) - 1
+	lon_inds = np.digitize(lon_vals, lon_bins) - 1
+
+	cell_sinr_dict = {}
+	for i in range(len(df)):
+		ilat = lat_inds[i]
+		ilon = lon_inds[i]
+		if 0 <= ilat < granularity and 0 <= ilon < granularity:
+			if (ilat, ilon) not in cell_sinr_dict:
+				cell_sinr_dict[(ilat, ilon)] = []
+			cell_sinr_dict[(ilat, ilon)].append(sinr_vals[i])
+
+	from shapely.geometry import Polygon
+	polygons = []
+	avg_sinr_list = []
+	for ilat in range(granularity):
+		for ilon in range(granularity):
+			lat0 = lat_bins[ilat]
+			lat1 = lat_bins[ilat + 1]
+			lon0 = lon_bins[ilon]
+			lon1 = lon_bins[ilon + 1]
+			poly = Polygon([(lon0, lat0), (lon0, lat1),
+							(lon1, lat1), (lon1, lat0)])
+			if (ilat, ilon) in cell_sinr_dict:
+				mean_sinr = np.mean(cell_sinr_dict[(ilat, ilon)])
+			else:
+				mean_sinr = np.nan
+			polygons.append(poly)
+			avg_sinr_list.append(mean_sinr)
+
+	gdf_grid = gpd.GeoDataFrame({"avg_sinr": avg_sinr_list, "geometry": polygons}, crs="EPSG:4326")
+	if len(polygon_gdf) > 0:
+		gdf_grid = gpd.clip(gdf_grid, polygon_gdf)
+
+	fig, ax = plt.subplots(figsize=(8.4, 6.8))
+	ax.set_title(f"Grid-Based SINR Heatmap {title_suffix}", fontsize=13, pad=12)
+
+	vmin, vmax = compute_percentile_range(gdf_grid["avg_sinr"].values)
+
+	gdf_grid.plot(
+		column="avg_sinr",
+		cmap="viridis",
+		alpha=0.7,
+		vmin=vmin,
+		vmax=vmax,
+		legend=False,
+		missing_kwds={"color": "lightgrey"},
+		ax=ax
+	)
+	# geopandas .plot() sets ax.set_aspect('equal'), which causes matplotlib
+	# to expand the viewport far beyond the AOI for small polygons.
+	# Reset to 'auto' so our explicit xlim/ylim are fully respected.
+	ax.set_aspect('auto')
+
+	norm = plt.Normalize(vmin=vmin, vmax=vmax)
+	sm = plt.cm.ScalarMappable(norm=norm, cmap="viridis")
+	sm.set_array([])
+
+	plot_min_lat, plot_max_lat, plot_min_lon, plot_max_lon = _expand_plot_bounds(
+		min_lat,
+		max_lat,
+		min_lon,
+		max_lon,
+	)
+	plot_polygon_outline(ax, polygon_gdf)
+	ax.set_xlim([plot_min_lon, plot_max_lon])
+	ax.set_ylim([plot_min_lat, plot_max_lat])
+	ax.tick_params(axis='x', labelrotation=45)
+	add_basemap(ax)
+	# Re-enforce limits – contextily may nudge them
+	ax.set_xlim([plot_min_lon, plot_max_lon])
+	ax.set_ylim([plot_min_lat, plot_max_lat])
+	ax.set_xlabel("Longitude")
+	ax.set_ylabel("Latitude")
+	ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+	ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
+	ax.xaxis.set_major_locator(plt.MaxNLocator(5))
+	ax.yaxis.set_major_locator(plt.MaxNLocator(5))
+
+	display_bbox = (
+		plot_min_lat,
+		plot_max_lat,
+		plot_min_lon,
+		plot_max_lon,
+	)
+	real_map, virt_map = build_freq_color_maps(real_antennas, virtual_antennas)
+	all_ants = real_antennas + virtual_antennas
+	real_drawn, virt_drawn = add_antenna_arrows(
+		ax, all_ants, display_bbox,
+		freq_color_map_real=real_map,
+		freq_color_map_virtual=virt_map,
+		arrow_scale_factor=0.12,
+		arrow_mutation_scale=17,
+	)
+	build_legend(ax, real_map, virt_map, real_drawn, virt_drawn, inside_axes=True)
+	add_inset_colorbar(ax, sm, "Average SINR (dB)", width="4.1%", height="54%", loc="upper right", borderpad=0.8)
+
+	add_north_arrow(ax)
+	add_scale_bar(ax)
+
+	out_png = os.path.join(output_folder, f"grid_based_sinr_heatmap{title_suffix}.png")
+	plt.savefig(out_png, dpi=300, bbox_inches='tight', pad_inches=0.1)
+	plt.close()
+	from coverage_app.cli_utils import _ok as _pok
+	_pok(f"Saved grid-based SINR heatmap → {out_png}")
+
+def plot_grid_and_stations(polygons_gdf, all_antennas, candidate_sites, grid_res, output_folder, title_suffix=""):
+	"""
+	Creates a plot showing:
+	- The map of the area
+	- The grid (as red dashed lines)
+	- The base stations and their antennas
+	"""
+	fig, ax = plt.subplots(figsize=(10, 9))
+	
+	# Plot the polygon outline if available
+	if len(polygons_gdf) > 0:
+		polygons_gdf.plot(ax=ax, color='none', edgecolor='black', linewidth=1, zorder=2)
+		minx, miny, maxx, maxy = polygons_gdf.iloc[0].geometry.bounds
+	else:
+		# Fallback to antennas bounding
+		lats = [ant["lat"] for ant in all_antennas]
+		lons = [ant["lon"] for ant in all_antennas]
+		miny, maxy = min(lats), max(lats)
+		minx, maxx = min(lons), max(lons)
+	
+	# Draw the grid
+	x_coords = np.linspace(minx, maxx, grid_res + 1)
+	y_coords = np.linspace(miny, maxy, grid_res + 1)
+	
+	# Vertical grid lines
+	for x in x_coords:
+		ax.plot([x, x], [miny, maxy], 'r--', alpha=0.7, linewidth=1.0, zorder=3)
+	
+	# Horizontal grid lines
+	for y in y_coords:
+		ax.plot([minx, maxx], [y, y], 'r--', alpha=0.7, linewidth=1.0, zorder=3)
+	
+	# Plot candidate sites (grid centers) in red
+	candidate_lats = [site[0] for site in candidate_sites]
+	candidate_lons = [site[1] for site in candidate_sites]
+	ax.scatter(candidate_lons, candidate_lats, c='red', s=30, alpha=0.4, zorder=4)
+	
+	# Plot antennas with arrows
+	real_antennas = [ant for ant in all_antennas if ant["type"] == "real"]
+	virtual_antennas = [ant for ant in all_antennas if ant["type"] == "virtual"]
+	
+	bbox = (miny, maxy, minx, maxx)
+	real_map, virt_map = build_freq_color_maps(real_antennas, virtual_antennas)
+	add_antenna_arrows(ax, all_antennas, bbox, real_map, virt_map)
+	
+	# Add basemap
+	add_basemap(ax)
+	
+	ax.set_xlim([minx, maxx])
+	ax.set_ylim([miny, maxy])
+	ax.set_title(f"Grid and Antenna Placement{title_suffix}", fontsize=12, pad=10)
+	ax.set_xlabel("Longitude")
+	ax.set_ylabel("Latitude")
+	
+	out_png = os.path.join(output_folder, f"grid_and_stations{title_suffix}.png")
+	plt.savefig(out_png, dpi=300, bbox_inches='tight', pad_inches=0.1)
+	plt.close()
+	print(f"[Info] Saved grid and stations plot at: {out_png}")
+
+def plot_performance_history(perf_history, output_folder, filename="channel_plan_performance_history.png"):
+	"""
+	Creates a plot with SINR, RSRP, RSRQ, and Throughput over the optimization process.
+	"""
+	df = pd.DataFrame(perf_history)
+	fig, ax = plt.subplots(2, 2, figsize=(10, 8))
+	fig.suptitle("Channel Plan Performance Evolution", fontsize=14)
+
+	ax[0][0].plot(df["iteration"], df["SINR"], marker='o', color='blue')
+	ax[0][0].set_title("AVG SINR (dB)")
+	ax[0][0].set_xlabel("Iteration")
+	ax[0][0].set_ylabel("SINR (dB)")
+
+	ax[0][1].plot(df["iteration"], df["RSRP"], marker='o', color='red')
+	ax[0][1].set_title("AVG RSRP (dBm)")
+	ax[0][1].set_xlabel("Iteration")
+	ax[0][1].set_ylabel("RSRP (dBm)")
+
+	ax[1][0].plot(df["iteration"], df["RSRQ"], marker='o', color='green')
+	ax[1][0].set_title("AVG RSRQ (dB)")
+	ax[1][0].set_xlabel("Iteration")
+	ax[1][0].set_ylabel("RSRQ (dB)")
+
+	ax[1][1].plot(df["iteration"], df["Throughput"], marker='o', color='purple')
+	ax[1][1].set_title("AVG Throughput (Mbps)")
+	ax[1][1].set_xlabel("Iteration")
+	ax[1][1].set_ylabel("Throughput (Mbps)")
+
+	plt.tight_layout()
+	os.makedirs(output_folder, exist_ok=True)
+	outpath = os.path.join(output_folder, filename)
+	plt.savefig(outpath, dpi=300, bbox_inches='tight', pad_inches=0.1)
+	plt.close()
+	print(f"[Info] Saved optimization performance evolution plot at: {outpath}")
+	return outpath
